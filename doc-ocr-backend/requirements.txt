@@ -19,6 +19,6 @@ lxml
 matplotlib
 openpyxl
 gunicorn
-fitz  # PyMuPDF
+PyMuPDF  # PyMuPDF
 python-dotenv
 paddlepaddle
