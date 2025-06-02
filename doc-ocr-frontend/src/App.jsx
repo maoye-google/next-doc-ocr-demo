@@ -57,6 +57,7 @@ function App() {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        timeout: 120000, // 2 minutes timeout for large PDFs
       });
       
       console.log("Backend Response:", response.data);

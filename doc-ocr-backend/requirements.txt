@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-paddleocr
+paddleocr==2.7.0.3
 Pillow
 pdf2image
 numpy
@@ -21,4 +21,4 @@ openpyxl
 gunicorn
 PyMuPDF  # PyMuPDF
 python-dotenv
-paddlepaddle
+paddlepaddle==2.5.2

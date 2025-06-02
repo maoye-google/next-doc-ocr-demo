@@ -18,5 +18,11 @@ export default defineConfig({
   },
   build: {
     outDir: 'build' // Output directory for 'npm run build'
+  },
+  optimizeDeps: {
+    include: ['pdfjs-dist']
+  },
+  worker: {
+    format: 'es'
   }
 })

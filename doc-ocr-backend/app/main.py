@@ -20,14 +20,16 @@ logger = logging.getLogger(__name__)
 # For simplicity, keeping it False as per spec for default.
 try:
     logger.info("Initializing PaddleOCR...")
-    # Default to English, enable angle classification, disable GPU by default
-    # Make sure your Docker image has the correct models or they will be downloaded on first run.
-    # To specify model directory: ocr = PaddleOCR(det_model_dir='path/to/det_model', rec_model_dir='path/to/rec_model', cls_model_dir='path/to/cls_model', lang="en", use_angle_cls=True, use_gpu=False)
-    # For CJK languages you might use lang='ch' or lang='japan' etc.
-    ocr_instance = PaddleOCR(lang="en", use_angle_cls=True, use_gpu=False, show_log=True)
+    print("=== Starting PaddleOCR initialization ===")
+    # Try minimal initialization
+    ocr_instance = PaddleOCR(lang='en')
+    logger.info(f"PaddleOCR instance type: {type(ocr_instance)}")
+    logger.info(f"PaddleOCR methods: {[method for method in dir(ocr_instance) if not method.startswith('_')]}")
     logger.info("PaddleOCR initialized successfully.")
+    print("=== PaddleOCR initialization completed ===")
 except Exception as e:
     logger.error(f"Error initializing PaddleOCR: {e}")
+    print(f"=== PaddleOCR initialization failed: {e} ===")
     ocr_instance = None
 
 app = FastAPI(title="OCR Backend Service", version="1.0.0")
@@ -63,39 +65,94 @@ class OCRResponse(BaseModel):
 
 def process_image_with_ocr(image_bytes: bytes) -> List[OCRDetection]:
     """Processes a single image (in bytes) using PaddleOCR and returns detections."""
-    if not ocr_instance:
-        raise HTTPException(status_code=500, detail="OCR service not initialized.")
+    print("=== FUNCTION START: process_image_with_ocr ===")
+    logger.info("=== Starting process_image_with_ocr function ===")
     
     try:
+        if not ocr_instance:
+            print("=== OCR INSTANCE IS NONE IN FUNCTION ===")
+            raise HTTPException(status_code=500, detail="OCR service not initialized.")
+        
+        print("=== STEP 1: About to process image bytes ===")
         # Convert image bytes to a NumPy array
         image = Image.open(io.BytesIO(image_bytes))
+        print("=== STEP 2: Opened image with PIL ===")
         if image.mode == 'P' or image.mode == 'RGBA': # Convert palette or RGBA images to RGB
              image = image.convert('RGB')
+        print("=== STEP 3: Converted image mode if needed ===")
         img_np = np.array(image)
+        print("=== STEP 4: Converted to numpy array ===")
+        print(f"=== Image shape: {img_np.shape} ===")
 
+        print("=== STEP 5: About to call PaddleOCR ===")
         logger.info(f"Performing OCR on image with shape: {img_np.shape}")
-        result = ocr_instance.ocr(img_np, cls=True) # cls=True uses the text angle classifier
-        logger.info(f"PaddleOCR raw result: {result}") # Log raw result for debugging
+        result = ocr_instance.ocr(img_np) # Remove cls parameter for compatibility
+        print("=== STEP 6: PaddleOCR call completed ===")
+        print(f"=== STEP 7: Result type: {type(result)} ===")
+        logger.info(f"PaddleOCR raw result type: {type(result)}")
+        
+        if isinstance(result, dict):
+            print(f"=== STEP 8: Result is dict with keys: {list(result.keys())} ===")
+            logger.info(f"PaddleOCR result keys: {result.keys()}")
+        else:
+            print(f"=== STEP 8: Result is not dict, value: {result} ===")
+            logger.info(f"PaddleOCR result value: {result}")
 
         detections = []
-        # PaddleOCR can return None if no text is found, or a list of lists.
-        # Structure: result = [[box, (text, score)], [box, (text, score)], ...] for each detected line.
-        # Sometimes result is [[[box, (text, score)], ...]] (nested list for an image)
+        print("=== STEP 9: Starting result processing ===")
         
-        ocr_lines = result[0] if result and len(result) == 1 and isinstance(result[0], list) else result
-
-        if ocr_lines: # Ensure ocr_lines is not None
-            for line_info in ocr_lines:
+        # Handle the new PaddleOCR API - check if result is a list containing a dictionary
+        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+            print("=== STEP 10: Result is list containing dictionary ===")
+            result = result[0]  # Extract the dictionary from the list
+        
+        if isinstance(result, dict):
+            logger.info("Processing new PaddleOCR dictionary format")
+            
+            # Extract polygons and recognized text
+            if 'rec_polys' in result and 'rec_texts' in result and 'rec_scores' in result:
+                polygons = result['rec_polys']
+                texts = result['rec_texts']
+                scores = result['rec_scores']
+                
+                logger.info(f"Found {len(polygons)} polygons, {len(texts)} texts, {len(scores)} scores")
+                
+                # Process each detection
+                for i, (polygon, text, score) in enumerate(zip(polygons, texts, scores)):
+                    logger.info(f"Detection {i}: text='{text}', score={score}")
+                    
+                    # Convert polygon to box format [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+                    # polygon is a numpy array of shape (N, 2) where N >= 4
+                    if len(polygon) >= 4:
+                        # Take first 4 points to create a box
+                        formatted_box = [[float(polygon[j][0]), float(polygon[j][1])] for j in range(4)]
+                        detections.append(OCRDetection(box=formatted_box, text=str(text), score=float(score)))
+                    else:
+                        logger.warning(f"Polygon {i} has insufficient points: {len(polygon)}")
+                        
+            else:
+                logger.warning(f"Expected keys not found in result. Available keys: {list(result.keys())}")
+                
+        elif isinstance(result, list):
+            logger.info("Processing legacy PaddleOCR list format")
+            # Handle the old list format for backwards compatibility
+            if len(result) > 0 and isinstance(result[0], list):
+                ocr_lines = result[0]
+            else:
+                ocr_lines = result
+                
+            for i, line_info in enumerate(ocr_lines):
                 if line_info and len(line_info) == 2:
                     box = line_info[0]
                     text, score = line_info[1]
                     
-                    # Ensure box is a list of 4 points, each point is [x, y]
-                    # PaddleOCR box format: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
-                    # Ensure all coordinates are floats
+                    logger.info(f"Detected text: '{text}' with score: {score}")
                     formatted_box = [[float(p[0]), float(p[1])] for p in box]
-
                     detections.append(OCRDetection(box=formatted_box, text=str(text), score=float(score)))
+        else:
+            logger.warning(f"Unexpected result type: {type(result)}")
+            
+        logger.info(f"Final detection count: {len(detections)}")
         return detections
     except Exception as e:
         logger.error(f"Error during OCR processing for an image: {e}", exc_info=True)
@@ -111,8 +168,8 @@ def convert_pdf_to_images(file_bytes: bytes) -> List[bytes]:
         for page_num in range(len(pdf_document)):
             page = pdf_document.load_page(page_num)
             # Render page to a pixmap (image)
-            # Higher DPI for better OCR quality, e.g., 300 DPI
-            pix = page.get_pixmap(dpi=300) 
+            # Use moderate DPI for balance between quality and speed
+            pix = page.get_pixmap(dpi=150) 
             img_bytes = pix.tobytes("png") # Output as PNG bytes
             images.append(img_bytes)
         pdf_document.close()
@@ -133,8 +190,13 @@ async def ocr_process_file(file: UploadFile = File(...)):
     """
     Accepts an image or PDF file, performs OCR, and returns structured results.
     """
+    logger.info("=== OCR ENDPOINT CALLED ===")
+    print("=== OCR ENDPOINT CALLED ===")  # Extra debug
+    print(f"=== OCR instance status: {ocr_instance is not None} ===")
+    logger.info(f"OCR instance status: {ocr_instance is not None}")
     if not ocr_instance:
         logger.error("OCR endpoint called but OCR instance is not available.")
+        print("=== OCR INSTANCE IS NONE ===")
         return OCRResponse(success=False, message="OCR service is not initialized or failed to load.", results=None)
 
     logger.info(f"Received file: {file.filename}, content type: {file.content_type}")
@@ -152,7 +214,10 @@ async def ocr_process_file(file: UploadFile = File(...)):
 
         if file.content_type.startswith("image/"):
             logger.info(f"Processing uploaded image: {file.filename}")
+            print(f"=== About to call process_image_with_ocr for {file.filename} ===")
             detections = process_image_with_ocr(contents)
+            print(f"=== process_image_with_ocr returned {len(detections)} detections ===")
+            logger.info(f"Got {len(detections)} detections from OCR")
             all_page_results.append(PageResult(page_number=1, detections=detections))
             message = "Image processed successfully."
 
@@ -161,15 +226,18 @@ async def ocr_process_file(file: UploadFile = File(...)):
             if not contents:
                  raise HTTPException(status_code=400, detail="Received empty PDF file.")
             
+            logger.info(f"Converting PDF {file.filename} to images...")
             image_bytes_list = convert_pdf_to_images(contents)
+            logger.info(f"PDF converted to {len(image_bytes_list)} images")
             if not image_bytes_list:
                 logger.warning(f"PDF {file.filename} resulted in no images after conversion.")
                 return OCRResponse(success=False, message="PDF processing failed to produce images.", results=None)
 
             for i, img_bytes in enumerate(image_bytes_list):
-                logger.info(f"Performing OCR on page {i+1} of PDF {file.filename}")
+                logger.info(f"Performing OCR on page {i+1}/{len(image_bytes_list)} of PDF {file.filename}")
                 detections = process_image_with_ocr(img_bytes)
                 all_page_results.append(PageResult(page_number=i + 1, detections=detections))
+                logger.info(f"Completed OCR for page {i+1}, found {len(detections)} text regions")
             message = f"PDF processed successfully, {len(image_bytes_list)} pages found."
         
         logger.info(f"Successfully processed {file.filename}. Pages: {len(all_page_results)}")

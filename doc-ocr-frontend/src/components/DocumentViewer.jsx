@@ -31,6 +31,9 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
   const [pdfPagesData, setPdfPagesData] = useState([]); // Stores { url, width, height } for each PDF page
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0, naturalWidth: 0, naturalHeight: 0 });
 
+  // Debug logging
+  console.log('DocumentViewer props:', { fileUrl, fileType, ocrResults: ocrResults?.length });
+
   // Effect for rendering single image and its OCR results
   useEffect(() => {
     if (fileType === 'image' && fileUrl && imageCanvasRef.current) {
@@ -65,10 +68,13 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
   // Effect for rendering PDF pages and their OCR results
   useEffect(() => {
     if (fileType === 'pdf' && fileUrl) {
+      console.log('Loading PDF:', fileUrl);
       const loadPdf = async () => {
         try {
+          console.log('Creating PDF loading task...');
           const loadingTask = pdfjsLib.getDocument(fileUrl);
           const pdf = await loadingTask.promise;
+          console.log('PDF loaded successfully, pages:', pdf.numPages);
           const numPages = pdf.numPages;
           const pagesData = [];
           pdfPagesRef.current = []; // Reset refs
@@ -97,9 +103,12 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
               naturalHeight: viewport.height / 1.5
             });
           }
+          console.log('PDF pages processed:', pagesData.length);
           setPdfPagesData(pagesData);
         } catch (error) {
           console.error('Error loading PDF for display:', error);
+          console.error('PDF URL:', fileUrl);
+          console.error('Error details:', error.message);
         }
       };
       loadPdf();
@@ -145,16 +154,32 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
       )}
       {fileType === 'pdf' && (
         <div className="pdf-container">
-          {pdfPagesData.map((page, index) => (
-            <div key={page.id} className="pdf-page">
-              <h4>Page {index + 1}</h4>
-              <canvas 
-                ref={el => pdfPagesRef.current[index] = el} 
-                width={page.width} 
-                height={page.height}
-              />
-            </div>
-          ))}
+          {pdfPagesData.length === 0 ? (
+            <div className="pdf-loading">Loading PDF...</div>
+          ) : (
+            pdfPagesData.map((page, index) => (
+              <div key={page.id} className="pdf-page">
+                <h4>Page {index + 1}</h4>
+                <canvas 
+                  ref={el => {
+                    if (el) {
+                      pdfPagesRef.current[index] = el;
+                      // Initialize canvas with page image
+                      const ctx = el.getContext('2d');
+                      const img = new Image();
+                      img.onload = () => {
+                        ctx.drawImage(img, 0, 0, el.width, el.height);
+                      };
+                      img.src = page.dataUrl;
+                    }
+                  }}
+                  width={page.width} 
+                  height={page.height}
+                  style={{ maxWidth: '100%', height: 'auto' }}
+                />
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
