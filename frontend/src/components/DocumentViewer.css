@@ -1,0 +1,46 @@
+/* frontend/src/components/DocumentViewer.css */
+.document-viewer {
+  margin-top: 2rem;
+  border: 1px solid #ddd;
+  padding: 1rem;
+  background-color: #f9f9f9;
+  border-radius: 5px;
+}
+
+.document-viewer h3 {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.5rem;
+}
+
+.image-container,
+.pdf-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem; /* Spacing between PDF pages */
+}
+
+.image-container canvas,
+.pdf-page canvas {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #ccc;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  background-color: white; /* Canvas background */
+}
+
+.pdf-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.pdf-page h4 {
+  margin-bottom: 0.5rem;
+  color: #555;
+  font-size: 1rem;
+}

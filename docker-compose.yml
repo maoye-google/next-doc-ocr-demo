@@ -1,0 +1,62 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Optional: Mount a volume for PaddleOCR model cache to persist models between container restarts.
+      # This can speed up subsequent starts after models are downloaded once.
+      - backend_models:/root/.paddleocr/
+      # If you have local code changes you want to reflect immediately without rebuilding (for development):
+      # - ./backend/app:/app/app
+    environment:
+      # Environment variables for the backend can be defined here if needed.
+      # For example, to enable GPU (if your Docker setup and hardware support it, and PaddleOCR is GPU version):
+      # - PADDLE_USE_GPU=1
+      # Ensure the Dockerfile installs paddlepaddle-gpu if you intend to use GPU.
+      PYTHONUNBUFFERED: 1 # Ensures Python logs are sent straight to Docker logs
+    # Optional: GPU configuration (requires Docker configured for GPU access)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    networks:
+      - ocr_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      # args: # You can pass build arguments to frontend Dockerfile if needed
+        # REACT_APP_API_URL: http://backend:8000/api # Example if you need to set it at build time
+    ports:
+      - "3000:80" # Map host port 3000 to container port 80 (where Nginx serves)
+    depends_on:
+      - backend # Ensures backend starts before frontend (for service availability)
+    environment:
+      # Environment variables for the frontend container (mainly for Nginx, if needed)
+      # React app gets its env vars at build time from .env or passed as build args.
+      # However, if Nginx needed to be aware of the backend, you could pass it here.
+      # NGINX_BACKEND_URL: http://backend:8000
+      REACT_APP_API_URL: http://backend:8000 # This is actually used by Vite at runtime if .env is not present or if using a different mechanism to inject env vars.
+    # If you have local code changes you want to reflect immediately (for development, if serving via dev server like Vite):
+    # volumes:
+    #   - ./frontend/src:/app/src 
+    #   - ./frontend/public:/app/public
+    networks:
+      - ocr_network
+
+volumes:
+  backend_models: # Persists PaddleOCR models
+
+networks:
+  ocr_network: # Custom network for services to communicate
+    driver: bridge

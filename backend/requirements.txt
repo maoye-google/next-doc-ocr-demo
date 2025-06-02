@@ -1,0 +1,24 @@
+fastapi
+uvicorn
+paddleocr
+Pillow
+pdf2image
+numpy
+python-multipart
+pydantic
+Pillow
+opencv-python-headless
+shapely
+pyclipper
+scikit-image
+imgaug
+pytesseract
+pandas
+Cython
+lxml
+matplotlib
+openpyxl
+gunicorn
+fitz  # PyMuPDF
+python-dotenv
+paddlepaddle
