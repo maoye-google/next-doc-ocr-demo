@@ -6,14 +6,14 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: '0.0.0.0', // Allow access from network (Docker)
-    port: 3000,      // Port Vite will run on
+    port: parseInt(process.env.PORT || '5173'),
     proxy: {
       // Optional: If you want to proxy API requests during development
-      // '/api': {
-      //   target: 'http://localhost:8000', // Your backend URL
-      //   changeOrigin: true,
-      //   rewrite: (path) => path.replace(/^\/api/, '')
-      // }
+      '/api': {
+        target: `http://${process.env.BACKEND_HOST || 'localhost'}:${process.env.BACKEND_PORT || 8000}`,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
     }
   },
   build: {

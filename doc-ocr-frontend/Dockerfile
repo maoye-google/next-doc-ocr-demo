@@ -17,8 +17,11 @@ RUN npm install
 COPY . .
 
 # Set the API URL from build argument or use a default for build-time (if needed)
-# ARG REACT_APP_API_URL
-# ENV REACT_APP_API_URL=$REACT_APP_API_URL
+ARG BACKEND_HOST
+ARG BACKEND_PORT
+
+ENV BACKEND_HOST=$BACKEND_HOST
+ENV BACKEND_PORT=$BACKEND_PORT
 
 # Build the React application
 RUN npm run build

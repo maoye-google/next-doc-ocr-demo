@@ -5,9 +5,6 @@ import FileUploader from './components/FileUploader';
 import DocumentViewer from './components/DocumentViewer';
 import './App.css'; // Specific styles for App component
 
-// Get API URL from environment variable (set by Docker Compose or .env for local dev)
-const API_BASE_URL = import.meta.env.VITE_REACT_APP_API_URL || 'http://localhost:8000';
-
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [ocrResults, setOcrResults] = useState(null);
@@ -56,7 +53,7 @@ function App() {
     formData.append('file', selectedFile);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/ocr/process/`, formData, {
+      const response = await axios.post(`api/ocr/process/`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },

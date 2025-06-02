@@ -3,6 +3,7 @@ version: '3.8'
 
 services:
   doc-ocr-backend: 
+    container_name: doc-ocr-backend
     build:
       context: ./doc-ocr-backend 
       dockerfile: Dockerfile
@@ -10,23 +11,29 @@ services:
       - "8000:8000"
     volumes:
       - doc_ocr_backend_models:/root/.paddleocr/ 
+      - ./doc-ocr-backend/app:/app/app
     environment:
       PYTHONUNBUFFERED: 1
     networks:
       - ocr_network
 
   doc-ocr-frontend:  # Renamed service
+    container_name: doc-ocr-frontend
     build:
       context: ./doc-ocr-frontend  # Updated context
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile_Dev
     ports:
-      - "3000:80"
-    depends_on:
-      - doc-ocr-backend 
+      - "${PORT}:5173"
     environment:
-      REACT_APP_API_URL: http://doc-ocr-backend:8000 
+      BACKEND_HOST: doc-ocr-backend
+      BACKEND_PORT: 8000 
     networks:
       - ocr_network
+    volumes:
+      - ./doc-ocr-frontend/src:/app/src
+      - ./doc-ocr-frontend/public:/app/public
+    depends_on:
+      - doc-ocr-backend
 
 volumes:
   doc_ocr_backend_models: 

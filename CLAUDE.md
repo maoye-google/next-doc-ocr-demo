@@ -4,27 +4,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-- `npm run dev` - Start development server with HMR
-- `npm run build` - Build for production (runs TypeScript compilation + Vite build)
-- `npm run lint` - Run ESLint on all files
-- `npm run preview` - Preview production build locally
+### Frontend (doc-ocr-frontend)
+- `cd doc-ocr-frontend && npm run dev` - Start React development server with HMR
+- `cd doc-ocr-frontend && npm run build` - Build React app for production 
+- `cd doc-ocr-frontend && npm run lint` - Run ESLint on frontend files
+- `cd doc-ocr-frontend && npm run preview` - Preview production build locally
+
+### Full Stack (Docker)
+- `docker-compose up` - Start both frontend and backend services
+- `docker-compose up --build` - Rebuild and start services
+- `docker-compose down` - Stop all services
+
+### Backend (doc-ocr-backend)
+- Backend runs on FastAPI with Uvicorn server
+- Direct Python execution: `cd doc-ocr-backend && python app/main.py`
 
 ## Project Architecture
 
-This is a React + TypeScript + Vite application with a minimal setup:
+This is a full-stack OCR application with Docker containerization:
 
-- **Build Tool**: Vite with React plugin for fast development and HMR
-- **TypeScript Configuration**: Uses project references with separate configs for app (`tsconfig.app.json`) and node (`tsconfig.node.json`)
-- **Entry Point**: `src/main.tsx` renders the root `App` component with React 19 StrictMode
-- **Styling**: CSS modules approach with component-specific stylesheets
+**Frontend (`doc-ocr-frontend/`):**
+- React 18 + Vite application for document upload and OCR result visualization
+- Uses Axios for API communication with backend
+- PDF.js for PDF rendering and overlay of OCR bounding boxes
+- File upload supporting images (JPG, PNG, etc.) and PDF documents
+
+**Backend (`doc-ocr-backend/`):**
+- FastAPI service providing OCR processing endpoints
+- PaddleOCR for text detection and recognition
+- PyMuPDF for PDF to image conversion 
+- Supports both single images and multi-page PDF processing
+- Returns structured JSON with bounding boxes, text, and confidence scores
+
+**Docker Architecture:**
+- Multi-service setup with `doc-ocr-backend` and `doc-ocr-frontend` containers
+- Backend exposes port 8000, frontend on configurable port (default 5173)
+- Shared network `ocr_network` for inter-service communication
+- Volume mounts for development hot-reloading
+- Persistent volume for PaddleOCR model caching
 
 ## Key Files
 
-- `src/App.tsx` - Main application component
-- `src/main.tsx` - Application entry point and root rendering
-- `vite.config.ts` - Vite configuration with React plugin
-- `credentials/claude-code-sa-key.json` - Service account credentials (do not commit changes to this file)
+**Frontend:**
+- `doc-ocr-frontend/src/App.jsx` - Main application component handling file upload and OCR workflow
+- `doc-ocr-frontend/src/components/FileUploader.jsx` - File selection and upload component
+- `doc-ocr-frontend/src/components/DocumentViewer.jsx` - Document display with OCR overlay
+- `doc-ocr-frontend/.env` - Environment configuration for API URL
 
-## TypeScript Setup
+**Backend:**
+- `doc-ocr-backend/app/main.py` - FastAPI application with OCR endpoints
+- `doc-ocr-backend/requirements.txt` - Python dependencies including PaddleOCR, FastAPI
+- `doc-ocr-backend/Dockerfile` - Backend container configuration
 
-The project uses TypeScript 5.8 with strict configuration and React 19 types. The build process runs TypeScript compilation before Vite bundling.
+**Infrastructure:**
+- `docker-compose.yml` - Multi-service orchestration
+- `credentials/` - Service account keys (do not commit changes)
+
+## API Integration
+
+- Frontend communicates with backend via `/api/ocr/process/` endpoint
+- Backend expects multipart/form-data file uploads
+- Returns structured OCR results with page-wise detections
+- CORS configured for cross-origin requests in development

@@ -38,6 +38,7 @@
       enable = true;
       previews = {
         web = {
+          cwd = "doc-ocr-frontend";
           command = ["npm" "run" "dev" "--" "--port" "$PORT" "--host" "0.0.0.0"];
           manager = "web";
         };
