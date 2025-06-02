@@ -57,7 +57,7 @@ function App() {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 120000, // 2 minutes timeout for large PDFs
+        timeout: 300000, // 5 minutes timeout for large PDFs
       });
       
       console.log("Backend Response:", response.data);
@@ -128,7 +128,16 @@ function App() {
         />
 
         {error && <p className="error-message">Error: {error}</p>}
-        {loading && <p className="loading-message">Processing, please wait...</p>}
+        {loading && (
+          <div className="loading-message">
+            <p>Processing {fileType === 'pdf' ? 'PDF document' : 'image'}, please wait...</p>
+            {fileType === 'pdf' && (
+              <p style={{ fontSize: '0.9em', color: '#666' }}>
+                PDF processing may take several minutes depending on the number of pages.
+              </p>
+            )}
+          </div>
+        )}
 
         {ocrResults && ocrResults.length > 0 && (
           <div className="results-actions">

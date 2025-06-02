@@ -66,3 +66,10 @@ This is a full-stack OCR application with Docker containerization:
 - Backend expects multipart/form-data file uploads
 - Returns structured OCR results with page-wise detections
 - CORS configured for cross-origin requests in development
+
+## Performance Notes
+
+- **PDF Processing**: Large PDFs may take several minutes to process
+- **Timeouts**: Frontend configured with 5-minute timeout for PDF processing
+- **Image Quality**: PDF pages rendered at 120 DPI for optimal speed/quality balance
+- **Memory**: PaddleOCR models are cached for better performance
