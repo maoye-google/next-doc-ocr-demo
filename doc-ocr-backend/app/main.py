@@ -22,7 +22,7 @@ try:
     logger.info("Initializing PaddleOCR...")
     print("=== Starting PaddleOCR initialization ===")
     # Try minimal initialization
-    ocr_instance = PaddleOCR(lang='en')
+    ocr_instance = PaddleOCR(lang='japan')
     logger.info(f"PaddleOCR instance type: {type(ocr_instance)}")
     logger.info(f"PaddleOCR methods: {[method for method in dir(ocr_instance) if not method.startswith('_')]}")
     logger.info("PaddleOCR initialized successfully.")

@@ -189,10 +189,11 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
                   if (isJapaneseText) {
                     // Adjust the box coordinates for Japanese text by adding a fixed offset to the height
                     // const adjustedBox = detection.box.map(point => [point[0]*1.01, point[1]*1.005+65]);
-                    const adjustedBox = detection.box.map(point => [point[0]*1.01, point[1]*0.98+85]);
+                    const adjustedBox = detection.box.map(point => [point[0]*1.07, point[1]*1.065]);
                     drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
                   } else {
-                    drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale, isHighlighted);
+                    const adjustedBox = detection.box.map(point => [point[0]*1.07, point[1]*1.065]);
+                    drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
                   }
                 }
               });
