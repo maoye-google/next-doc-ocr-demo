@@ -28,3 +28,6 @@ credentials/**
 
 # Environment Setting
 **/.env
+
+# Local Cache files
+**/__pycache__

@@ -22,7 +22,7 @@ try:
     logger.info("Initializing PaddleOCR...")
     print("=== Starting PaddleOCR initialization ===")
     # Try minimal initialization
-    ocr_instance = PaddleOCR(lang='en')
+    ocr_instance = PaddleOCR(lang='en,japan')
     logger.info(f"PaddleOCR instance type: {type(ocr_instance)}")
     logger.info(f"PaddleOCR methods: {[method for method in dir(ocr_instance) if not method.startswith('_')]}")
     logger.info("PaddleOCR initialized successfully.")
@@ -51,6 +51,7 @@ class OCRDetection(BaseModel):
     box: List[List[float]] = Field(..., description="Bounding box coordinates [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]")
     text: str = Field(..., description="Recognized text string")
     score: float = Field(..., description="Confidence score of the recognition")
+    language: Optional[str] = Field(None, description="Detected language of the text")
 
 class PageResult(BaseModel):
     page_number: int = Field(..., description="Page index (starting from 1)")

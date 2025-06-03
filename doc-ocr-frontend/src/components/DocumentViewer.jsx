@@ -130,9 +130,38 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
             // Find OCR results for this page
             const pageResult = ocrResults.find(r => r.page_number === (index + 1));
             if (pageResult) {
-              const imageScale = canvasRef.width / pageData.naturalWidth; // Scale factor from original PDF page to displayed canvas
+              // The OCR was performed on 120 DPI images, but frontend renders at 1.5x scale
+              // We need to account for both the backend DPI scaling and frontend display scaling
+              const backendDPI = 120;
+              const frontendScale = 1.5;
+              
+              // Check if this page contains mostly Japanese text
+              const hasJapanese = pageResult.detections.some(detection => 
+                /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text)
+              );
+              
+              // Apply different scaling for Japanese text which may have different coordinate handling
+              let imageScale;
+              if (hasJapanese) {
+                // For Japanese text, the coordinates seem to be larger than expected
+                // Apply a reduced scaling factor to compensate
+                const baseScale = (frontendScale * 75) / backendDPI;
+                imageScale = baseScale * 0.9; // Reduce by 40% to compensate for oversized coordinates
+              } else {
+                // For English text, use the DPI-based scaling
+                imageScale = (frontendScale * 72) / backendDPI;
+              }
+              
               pageResult.detections.forEach(detection => {
-                drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale);
+                const isJapaneseText = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text);
+                if (isJapaneseText) {
+                  // Adjust the box coordinates for Japanese text by adding a fixed offset to the height
+                  // const adjustedBox = detection.box.map(point => [point[0]*1.01, point[1]*1.005+65]);
+                  const adjustedBox = detection.box.map(point => [point[0]*1.01, point[1]*0.98+85]);
+                  drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale);
+                } else {
+                  drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale);
+                }
               });
             }
           };
