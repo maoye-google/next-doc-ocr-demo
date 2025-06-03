@@ -68,3 +68,113 @@
   box-shadow: none;
   cursor: not-allowed;
 }
+
+/* Text Dialog Styles */
+.text-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  pointer-events: none; /* Allow clicks to pass through overlay */
+}
+
+.text-dialog {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  max-width: 600px;
+  max-height: 80vh;
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto; /* Re-enable pointer events for dialog */
+  user-select: none; /* Prevent text selection during drag */
+}
+
+.text-dialog.draggable {
+  position: fixed;
+}
+
+.text-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px 12px 24px;
+  border-bottom: 1px solid #eee;
+  cursor: grab;
+}
+
+.text-dialog-header:active {
+  cursor: grabbing;
+}
+
+.text-dialog-header h3 {
+  margin: 0;
+  color: #333;
+  font-size: 1.4rem;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #666;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.2s ease;
+}
+
+.close-button:hover {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.text-dialog-content {
+  padding: 16px 24px 24px 24px;
+  overflow-y: auto;
+  flex: 1;
+  cursor: default; /* Override grab cursor for content area */
+}
+
+.page-text {
+  margin-bottom: 20px;
+}
+
+.page-text h4 {
+  color: #666;
+  font-size: 1.1rem;
+  margin: 0 0 12px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.text-line {
+  padding: 8px 12px;
+  margin: 4px 0;
+  background: #f8f9fa;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-left: 3px solid transparent;
+}
+
+.text-line:hover {
+  background: #e9ecef;
+  border-left-color: #007bff;
+  transform: translateX(4px);
+}
+
+.text-line.highlighted {
+  background: #fff3cd;
+  border-left-color: #ffc107;
+  font-weight: 500;
+}

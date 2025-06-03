@@ -4,7 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import './DocumentViewer.css';
 
 // Helper to draw bounding boxes
-const drawBoundingBox = (ctx, box, text, score, imageScale) => {
+const drawBoundingBox = (ctx, box, text, score, imageScale, isHighlighted = false) => {
   ctx.beginPath();
   // Box format: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
   // Ensure coordinates are scaled
@@ -14,22 +14,23 @@ const drawBoundingBox = (ctx, box, text, score, imageScale) => {
   ctx.lineTo(box[3][0] * imageScale, box[3][1] * imageScale);
   ctx.closePath();
   
-  ctx.strokeStyle = 'rgba(255, 0, 0, 0.7)'; // Red color for box
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = isHighlighted ? 'rgba(255, 215, 0, 0.9)' : 'rgba(255, 0, 0, 0.7)'; // Gold for highlighted, red for normal
+  ctx.lineWidth = isHighlighted ? 3 : 2;
   ctx.stroke();
 
   // Optional: Display text and score (can be improved for better visibility)
-  ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
+  ctx.fillStyle = isHighlighted ? 'rgba(255, 215, 0, 0.9)' : 'rgba(255, 0, 0, 0.7)';
   ctx.font = `${12 * imageScale}px Arial`;
   // Position text near the top-left corner of the bounding box
   ctx.fillText(`${text} (${score.toFixed(2)})`, (box[0][0] * imageScale) + 5, (box[0][1] * imageScale) - 5);
 };
 
-function DocumentViewer({ fileUrl, fileType, ocrResults }) {
+function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, highlightedDetectionIndex = null, showOnlyHighlighted = false }) {
   const imageCanvasRef = useRef(null); // For single image display
   const pdfPagesRef = useRef([]); // For PDF pages, array of canvas refs
   const [pdfPagesData, setPdfPagesData] = useState([]); // Stores { url, width, height } for each PDF page
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0, naturalWidth: 0, naturalHeight: 0 });
+  const documentViewerRef = useRef(null);
 
   // Debug logging
   console.log('DocumentViewer props:', { fileUrl, fileType, ocrResults: ocrResults?.length });
@@ -50,11 +51,19 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
 
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-        // Draw OCR boxes if results are available for page 1 (image is page 1)
+        // Draw OCR boxes if results are available for page 1 (image is page 1) and visibility is enabled
         if (ocrResults && ocrResults.length > 0 && ocrResults[0].page_number === 1) {
           const imageScale = canvas.width / img.naturalWidth; // Scale factor from original image to displayed canvas
-          ocrResults[0].detections.forEach(detection => {
-            drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale);
+          ocrResults[0].detections.forEach((detection, detectionIndex) => {
+            const globalIndex = 0 * 1000 + detectionIndex; // Same indexing as in App.jsx
+            const isHighlighted = highlightedDetectionIndex === globalIndex;
+            
+            // Show box if: (showOcrResults is true) OR (showOnlyHighlighted is true AND this box is highlighted)
+            const shouldShowBox = (showOcrResults && !showOnlyHighlighted) || (showOnlyHighlighted && isHighlighted);
+            
+            if (shouldShowBox) {
+              drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale, isHighlighted);
+            }
           });
         }
       };
@@ -63,7 +72,7 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
       };
       img.src = fileUrl;
     }
-  }, [fileUrl, fileType, ocrResults, imageCanvasRef]);
+  }, [fileUrl, fileType, ocrResults, showOcrResults, showOnlyHighlighted, highlightedDetectionIndex, imageCanvasRef]);
 
   // Effect for rendering PDF pages and their OCR results
   useEffect(() => {
@@ -129,7 +138,7 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
             
             // Find OCR results for this page
             const pageResult = ocrResults.find(r => r.page_number === (index + 1));
-            if (pageResult) {
+            if (showOcrResults && pageResult) {
               // The OCR was performed on 120 DPI images, but frontend renders at 1.5x scale
               // We need to account for both the backend DPI scaling and frontend display scaling
               const backendDPI = 120;
@@ -152,15 +161,23 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
                 imageScale = (frontendScale * 72) / backendDPI;
               }
               
-              pageResult.detections.forEach(detection => {
-                const isJapaneseText = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text);
-                if (isJapaneseText) {
-                  // Adjust the box coordinates for Japanese text by adding a fixed offset to the height
-                  // const adjustedBox = detection.box.map(point => [point[0]*1.01, point[1]*1.005+65]);
-                  const adjustedBox = detection.box.map(point => [point[0]*1.01, point[1]*0.98+85]);
-                  drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale);
-                } else {
-                  drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale);
+              pageResult.detections.forEach((detection, detectionIndex) => {
+                const globalIndex = index * 1000 + detectionIndex; // Same indexing as in App.jsx
+                const isHighlighted = highlightedDetectionIndex === globalIndex;
+                
+                // Show box if: (showOcrResults is true) OR (showOnlyHighlighted is true AND this box is highlighted)
+                const shouldShowBox = (showOcrResults && !showOnlyHighlighted) || (showOnlyHighlighted && isHighlighted);
+                
+                if (shouldShowBox) {
+                  const isJapaneseText = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text);
+                  if (isJapaneseText) {
+                    // Adjust the box coordinates for Japanese text by adding a fixed offset to the height
+                    // const adjustedBox = detection.box.map(point => [point[0]*1.01, point[1]*1.005+65]);
+                    const adjustedBox = detection.box.map(point => [point[0]*1.01, point[1]*0.98+85]);
+                    drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
+                  } else {
+                    drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale, isHighlighted);
+                  }
                 }
               });
             }
@@ -169,12 +186,35 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
         }
       });
     }
-  }, [pdfPagesData, ocrResults, fileType]);
+  }, [pdfPagesData, ocrResults, showOcrResults, showOnlyHighlighted, highlightedDetectionIndex, fileType]);
+
+  // Auto-scroll to highlighted detection
+  useEffect(() => {
+    if (highlightedDetectionIndex !== null && ocrResults && documentViewerRef.current) {
+      // Find which page contains the highlighted detection
+      const pageIndex = Math.floor(highlightedDetectionIndex / 1000);
+      const detectionIndex = highlightedDetectionIndex % 1000;
+      
+      if (fileType === 'pdf' && pdfPagesData.length > pageIndex) {
+        // For PDF, scroll to the specific page
+        const pageElement = documentViewerRef.current.querySelector(`[data-page="${pageIndex}"]`);
+        if (pageElement) {
+          pageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      } else if (fileType === 'image') {
+        // For single image, scroll to the canvas
+        const imageContainer = documentViewerRef.current.querySelector('.image-container');
+        if (imageContainer) {
+          imageContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }
+    }
+  }, [highlightedDetectionIndex, ocrResults, fileType, pdfPagesData]);
 
   if (!fileUrl) return null;
 
   return (
-    <div className="document-viewer">
+    <div ref={documentViewerRef} className="document-viewer">
       <h3>Document Preview</h3>
       {fileType === 'image' && (
         <div className="image-container">
@@ -187,7 +227,7 @@ function DocumentViewer({ fileUrl, fileType, ocrResults }) {
             <div className="pdf-loading">Loading PDF...</div>
           ) : (
             pdfPagesData.map((page, index) => (
-              <div key={page.id} className="pdf-page">
+              <div key={page.id} className="pdf-page" data-page={index}>
                 <h4>Page {index + 1}</h4>
                 <canvas 
                   ref={el => {

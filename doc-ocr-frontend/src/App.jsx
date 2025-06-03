@@ -1,9 +1,101 @@
 // frontend/src/App.jsx
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import axios from 'axios';
 import FileUploader from './components/FileUploader';
 import DocumentViewer from './components/DocumentViewer';
 import './App.css'; // Specific styles for App component
+
+// Draggable Text Dialog Component
+function DraggableTextDialog({ ocrResults, highlightedDetectionIndex, onClose, onTextClick }) {
+  const [position, setPosition] = useState({ x: 100, y: 100 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dialogRef = useRef(null);
+
+  const handleMouseDown = (e) => {
+    if (e.target.closest('.text-dialog-content') || e.target.closest('.close-button')) {
+      return; // Don't start dragging if clicking on content or close button
+    }
+    
+    setIsDragging(true);
+    const rect = dialogRef.current.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDragging) return;
+    
+    setPosition({
+      x: e.clientX - dragOffset.x,
+      y: e.clientY - dragOffset.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  React.useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, dragOffset]);
+
+  return (
+    <div className="text-dialog-overlay">
+      <div 
+        ref={dialogRef}
+        className="text-dialog draggable"
+        style={{
+          position: 'fixed',
+          left: position.x,
+          top: position.y,
+          cursor: isDragging ? 'grabbing' : 'grab'
+        }}
+        onMouseDown={handleMouseDown}
+      >
+        <div className="text-dialog-header">
+          <h3>Detected Text</h3>
+          <button 
+            className="close-button"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+        <div className="text-dialog-content">
+          {ocrResults.map((page, pageIndex) => (
+            <div key={pageIndex} className="page-text">
+              {ocrResults.length > 1 && <h4>Page {page.page_number}</h4>}
+              {page.detections.map((detection, detectionIndex) => {
+                const globalIndex = pageIndex * 1000 + detectionIndex;
+                return (
+                  <div 
+                    key={detectionIndex}
+                    className={`text-line ${
+                      highlightedDetectionIndex === globalIndex ? 'highlighted' : ''
+                    }`}
+                    onClick={() => onTextClick(globalIndex)}
+                  >
+                    {detection.text}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -12,6 +104,10 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [fileUrl, setFileUrl] = useState(null); // For displaying the uploaded image/PDF
   const [fileType, setFileType] = useState(''); // 'image' or 'pdf'
+  const [showOcrResults, setShowOcrResults] = useState(true); // Toggle for OCR result visibility
+  const [showTextDialog, setShowTextDialog] = useState(false);
+  const [highlightedDetectionIndex, setHighlightedDetectionIndex] = useState(null);
+  const [showOnlyHighlighted, setShowOnlyHighlighted] = useState(false);
 
   const handleFileSelect = (file) => {
     setSelectedFile(file);
@@ -144,6 +240,30 @@ function App() {
             <button onClick={downloadJsonResults} disabled={loading || !ocrResults}>
               Download OCR JSON Results
             </button>
+            <button 
+              onClick={() => setShowOcrResults(!showOcrResults)}
+              disabled={loading}
+              style={{ 
+                marginLeft: '10px',
+                backgroundColor: showOcrResults ? '#007bff' : '#6c757d'
+              }}
+            >
+              {showOcrResults ? 'Hide OCR Results' : 'Show OCR Results'}
+            </button>
+            <button 
+              onClick={() => {
+                setShowTextDialog(true);
+                setShowOnlyHighlighted(false);
+                setHighlightedDetectionIndex(null);
+              }}
+              disabled={loading}
+              style={{ 
+                marginLeft: '10px',
+                backgroundColor: '#28a745'
+              }}
+            >
+              Display Detected Text
+            </button>
           </div>
         )}
 
@@ -152,6 +272,21 @@ function App() {
             fileUrl={fileUrl} 
             fileType={fileType} 
             ocrResults={ocrResults}
+            showOcrResults={showOcrResults && !showTextDialog}
+            highlightedDetectionIndex={highlightedDetectionIndex}
+            showOnlyHighlighted={showOnlyHighlighted}
+          />
+        )}
+
+        {showTextDialog && ocrResults && (
+          <DraggableTextDialog 
+            ocrResults={ocrResults}
+            highlightedDetectionIndex={highlightedDetectionIndex}
+            onClose={() => setShowTextDialog(false)}
+            onTextClick={(globalIndex) => {
+              setHighlightedDetectionIndex(globalIndex);
+              setShowOnlyHighlighted(true);
+            }}
           />
         )}
       </div>
