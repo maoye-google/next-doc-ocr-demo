@@ -237,17 +237,14 @@ function App() {
 
         {ocrResults && ocrResults.length > 0 && (
           <div className="results-actions">
-            <button onClick={downloadJsonResults} disabled={loading || !ocrResults}>
-              Download OCR JSON Results
-            </button>
             <button 
               onClick={() => setShowOcrResults(!showOcrResults)}
               disabled={loading}
               style={{ 
-                marginLeft: '10px',
                 backgroundColor: showOcrResults ? '#007bff' : '#6c757d'
               }}
             >
+              <span className="button-icon">{showOcrResults ? '🙈' : '👁️'}</span>
               {showOcrResults ? 'Hide OCR Results' : 'Show OCR Results'}
             </button>
             <button 
@@ -262,7 +259,18 @@ function App() {
                 backgroundColor: '#28a745'
               }}
             >
+              <span className="button-icon">📝</span>
               Display Detected Text
+            </button>
+            <button 
+              onClick={downloadJsonResults} 
+              disabled={loading || !ocrResults}
+              style={{ 
+                marginLeft: '10px'
+              }}
+            >
+              <span className="button-icon">⬇️</span>
+              Result Download (JSON)
             </button>
           </div>
         )}
@@ -272,9 +280,10 @@ function App() {
             fileUrl={fileUrl} 
             fileType={fileType} 
             ocrResults={ocrResults}
-            showOcrResults={showOcrResults && !showTextDialog}
+            showOcrResults={showOcrResults}
             highlightedDetectionIndex={highlightedDetectionIndex}
             showOnlyHighlighted={showOnlyHighlighted}
+            showTextDialog={showTextDialog}
           />
         )}
 
@@ -282,7 +291,11 @@ function App() {
           <DraggableTextDialog 
             ocrResults={ocrResults}
             highlightedDetectionIndex={highlightedDetectionIndex}
-            onClose={() => setShowTextDialog(false)}
+            onClose={() => {
+              setShowTextDialog(false);
+              setShowOnlyHighlighted(false);
+              setHighlightedDetectionIndex(null);
+            }}
             onTextClick={(globalIndex) => {
               setHighlightedDetectionIndex(globalIndex);
               setShowOnlyHighlighted(true);

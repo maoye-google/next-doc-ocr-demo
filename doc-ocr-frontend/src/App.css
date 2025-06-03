@@ -69,6 +69,12 @@
   cursor: not-allowed;
 }
 
+.button-icon {
+  margin-right: 8px;
+  font-size: 1.1em;
+  display: inline-block;
+}
+
 /* Text Dialog Styles */
 .text-dialog-overlay {
   position: fixed;

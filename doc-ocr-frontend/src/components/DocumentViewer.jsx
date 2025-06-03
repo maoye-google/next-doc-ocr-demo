@@ -25,7 +25,7 @@ const drawBoundingBox = (ctx, box, text, score, imageScale, isHighlighted = fals
   ctx.fillText(`${text} (${score.toFixed(2)})`, (box[0][0] * imageScale) + 5, (box[0][1] * imageScale) - 5);
 };
 
-function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, highlightedDetectionIndex = null, showOnlyHighlighted = false }) {
+function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, highlightedDetectionIndex = null, showOnlyHighlighted = false, showTextDialog = false }) {
   const imageCanvasRef = useRef(null); // For single image display
   const pdfPagesRef = useRef([]); // For PDF pages, array of canvas refs
   const [pdfPagesData, setPdfPagesData] = useState([]); // Stores { url, width, height } for each PDF page
@@ -58,8 +58,16 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
             const globalIndex = 0 * 1000 + detectionIndex; // Same indexing as in App.jsx
             const isHighlighted = highlightedDetectionIndex === globalIndex;
             
-            // Show box if: (showOcrResults is true) OR (showOnlyHighlighted is true AND this box is highlighted)
-            const shouldShowBox = (showOcrResults && !showOnlyHighlighted) || (showOnlyHighlighted && isHighlighted);
+            // Show box logic:
+            // 1. If text dialog is open AND showOnlyHighlighted is true: only show highlighted boxes
+            // 2. If text dialog is open AND showOnlyHighlighted is false: hide all boxes
+            // 3. If text dialog is closed: follow normal showOcrResults logic
+            let shouldShowBox;
+            if (showTextDialog) {
+              shouldShowBox = showOnlyHighlighted && isHighlighted;
+            } else {
+              shouldShowBox = showOcrResults;
+            }
             
             if (shouldShowBox) {
               drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale, isHighlighted);
@@ -72,7 +80,7 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
       };
       img.src = fileUrl;
     }
-  }, [fileUrl, fileType, ocrResults, showOcrResults, showOnlyHighlighted, highlightedDetectionIndex, imageCanvasRef]);
+  }, [fileUrl, fileType, ocrResults, showOcrResults, showOnlyHighlighted, highlightedDetectionIndex, showTextDialog, imageCanvasRef]);
 
   // Effect for rendering PDF pages and their OCR results
   useEffect(() => {
@@ -165,8 +173,16 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
                 const globalIndex = index * 1000 + detectionIndex; // Same indexing as in App.jsx
                 const isHighlighted = highlightedDetectionIndex === globalIndex;
                 
-                // Show box if: (showOcrResults is true) OR (showOnlyHighlighted is true AND this box is highlighted)
-                const shouldShowBox = (showOcrResults && !showOnlyHighlighted) || (showOnlyHighlighted && isHighlighted);
+                // Show box logic:
+                // 1. If text dialog is open AND showOnlyHighlighted is true: only show highlighted boxes
+                // 2. If text dialog is open AND showOnlyHighlighted is false: hide all boxes
+                // 3. If text dialog is closed: follow normal showOcrResults logic
+                let shouldShowBox;
+                if (showTextDialog) {
+                  shouldShowBox = showOnlyHighlighted && isHighlighted;
+                } else {
+                  shouldShowBox = showOcrResults;
+                }
                 
                 if (shouldShowBox) {
                   const isJapaneseText = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text);
@@ -186,7 +202,7 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
         }
       });
     }
-  }, [pdfPagesData, ocrResults, showOcrResults, showOnlyHighlighted, highlightedDetectionIndex, fileType]);
+  }, [pdfPagesData, ocrResults, showOcrResults, showOnlyHighlighted, highlightedDetectionIndex, showTextDialog, fileType]);
 
   // Auto-scroll to highlighted detection
   useEffect(() => {
