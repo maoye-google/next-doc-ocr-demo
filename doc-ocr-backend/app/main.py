@@ -22,7 +22,7 @@ try:
     logger.info("Initializing PaddleOCR...")
     print("=== Starting PaddleOCR initialization ===")
     # Try minimal initialization
-    ocr_instance = PaddleOCR(lang='en,japan')
+    ocr_instance = PaddleOCR(lang='en')
     logger.info(f"PaddleOCR instance type: {type(ocr_instance)}")
     logger.info(f"PaddleOCR methods: {[method for method in dir(ocr_instance) if not method.startswith('_')]}")
     logger.info("PaddleOCR initialized successfully.")
@@ -186,7 +186,7 @@ async def read_root():
     """Returns a welcome message for the OCR backend service."""
     return {"message": "OCR Backend Service is running"}
 
-@app.post("/ocr/process/", summary="Process an uploaded file (image or PDF) for OCR", response_model=OCRResponse)
+@app.post("/api/ocr/process/", summary="Process an uploaded file (image or PDF) for OCR", response_model=OCRResponse)
 async def ocr_process_file(file: UploadFile = File(...)):
     """
     Accepts an image or PDF file, performs OCR, and returns structured results.

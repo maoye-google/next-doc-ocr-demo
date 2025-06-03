@@ -26,7 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy requirements.txt and install Python dependencies
 COPY requirements.txt requirements.txt
-# Consider using --no-cache-dir to reduce image size
+
+# Install numpy first to avoid ABI conflicts
+RUN pip install --no-cache-dir numpy==1.21.6
+
+# Install remaining dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code

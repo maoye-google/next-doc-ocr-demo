@@ -1,24 +1,10 @@
+# Essential dependencies only - let PaddleOCR manage its own versions
+numpy==1.21.6
 fastapi
 uvicorn
-paddleocr==2.7.0.3
-Pillow
-pdf2image
-numpy
 python-multipart
 pydantic
-Pillow
-opencv-python-headless
-shapely
-pyclipper
-scikit-image
-imgaug
-pytesseract
-pandas
-Cython
-lxml
-matplotlib
-openpyxl
-gunicorn
-PyMuPDF  # PyMuPDF
+PyMuPDF
 python-dotenv
 paddlepaddle==2.5.2
+paddleocr==2.7.0.3
