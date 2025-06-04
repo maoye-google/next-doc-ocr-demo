@@ -6,7 +6,7 @@ import DocumentViewer from './components/DocumentViewer';
 import './App.css'; // Specific styles for App component
 
 // Draggable Text Dialog Component
-function DraggableTextDialog({ ocrResults, highlightedDetectionIndex, onClose, onTextClick }) {
+function DraggableTextDialog({ ocrResults, manualOcrResults = [], highlightedDetectionIndex, onClose, onTextClick, textItemStates, onTextItemToggle, onFieldNameChange }) {
   const [position, setPosition] = useState({ x: 100, y: 100 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -77,20 +77,138 @@ function DraggableTextDialog({ ocrResults, highlightedDetectionIndex, onClose, o
               {ocrResults.length > 1 && <h4>Page {page.page_number}</h4>}
               {page.detections.map((detection, detectionIndex) => {
                 const globalIndex = pageIndex * 1000 + detectionIndex;
+                const isVisible = textItemStates[globalIndex]?.visible ?? true;
+                const fieldName = textItemStates[globalIndex]?.fieldName ?? '';
                 return (
                   <div 
                     key={detectionIndex}
-                    className={`text-line ${
+                    className={`text-item ${
                       highlightedDetectionIndex === globalIndex ? 'highlighted' : ''
-                    }`}
-                    onClick={() => onTextClick(globalIndex)}
+                    } ${!isVisible ? 'hidden-item' : ''}`}
+                    style={{ 
+                      border: '1px solid #ddd', 
+                      margin: '5px 0', 
+                      padding: '8px',
+                      backgroundColor: isVisible ? '#fff' : '#f5f5f5',
+                      opacity: isVisible ? 1 : 0.6
+                    }}
                   >
-                    {detection.text}
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
+                      <button
+                        onClick={() => onTextItemToggle(globalIndex)}
+                        style={{
+                          marginRight: '8px',
+                          padding: '2px 6px',
+                          fontSize: '12px',
+                          backgroundColor: isVisible ? '#28a745' : '#6c757d',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {isVisible ? '👁️' : '🙈'}
+                      </button>
+                      <input
+                        type="text"
+                        placeholder="Field Name"
+                        value={fieldName}
+                        onChange={(e) => onFieldNameChange(globalIndex, e.target.value)}
+                        style={{
+                          flex: 1,
+                          padding: '3px 6px',
+                          fontSize: '12px',
+                          border: '1px solid #ccc',
+                          borderRadius: '3px'
+                        }}
+                      />
+                    </div>
+                    <div 
+                      className="text-content"
+                      onClick={() => onTextClick(globalIndex)}
+                      style={{ 
+                        cursor: 'pointer',
+                        padding: '3px',
+                        borderRadius: '3px',
+                        backgroundColor: highlightedDetectionIndex === globalIndex ? '#fffacd' : 'transparent'
+                      }}
+                    >
+                      {detection.text}
+                    </div>
                   </div>
                 );
               })}
             </div>
           ))}
+          {manualOcrResults.length > 0 && (
+            <div className="manual-ocr-section">
+              <h4>Manual Selections</h4>
+              {manualOcrResults.map((detection, detectionIndex) => {
+                const globalIndex = -1000 - detectionIndex;
+                const isVisible = textItemStates[globalIndex]?.visible ?? true;
+                const fieldName = textItemStates[globalIndex]?.fieldName ?? '';
+                return (
+                  <div 
+                    key={`manual-${detectionIndex}`}
+                    className={`text-item manual-selection ${
+                      highlightedDetectionIndex === globalIndex ? 'highlighted' : ''
+                    } ${!isVisible ? 'hidden-item' : ''}`}
+                    style={{ 
+                      border: '1px solid #28a745', 
+                      margin: '5px 0', 
+                      padding: '8px',
+                      backgroundColor: isVisible ? '#e8f5e8' : '#f5f5f5',
+                      opacity: isVisible ? 1 : 0.6
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '5px' }}>
+                      <button
+                        onClick={() => onTextItemToggle(globalIndex)}
+                        style={{
+                          marginRight: '8px',
+                          padding: '2px 6px',
+                          fontSize: '12px',
+                          backgroundColor: isVisible ? '#28a745' : '#6c757d',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '3px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {isVisible ? '👁️' : '🙈'}
+                      </button>
+                      <input
+                        type="text"
+                        placeholder="Field Name"
+                        value={fieldName}
+                        onChange={(e) => onFieldNameChange(globalIndex, e.target.value)}
+                        style={{
+                          flex: 1,
+                          padding: '3px 6px',
+                          fontSize: '12px',
+                          border: '1px solid #28a745',
+                          borderRadius: '3px',
+                          backgroundColor: 'white'
+                        }}
+                      />
+                    </div>
+                    <div 
+                      className="text-content"
+                      onClick={() => onTextClick(globalIndex)}
+                      style={{ 
+                        cursor: 'pointer',
+                        padding: '3px',
+                        borderRadius: '3px',
+                        backgroundColor: highlightedDetectionIndex === globalIndex ? '#fffacd' : 'transparent'
+                      }}
+                    >
+                      {detection.text} (Manual)
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -108,6 +226,9 @@ function App() {
   const [showTextDialog, setShowTextDialog] = useState(false);
   const [highlightedDetectionIndex, setHighlightedDetectionIndex] = useState(null);
   const [showOnlyHighlighted, setShowOnlyHighlighted] = useState(false);
+  const [isManualSelectionMode, setIsManualSelectionMode] = useState(false);
+  const [manualOcrResults, setManualOcrResults] = useState([]);
+  const [textItemStates, setTextItemStates] = useState({}); // Store visibility and field names for each text item
 
   const handleFileSelect = (file) => {
     setSelectedFile(file);
@@ -115,6 +236,9 @@ function App() {
     setError('');
     setFileUrl(null);
     setFileType('');
+    setManualOcrResults([]);
+    setIsManualSelectionMode(false);
+    setTextItemStates({});
     if (file) {
       // Create a URL for the selected file to display it
       const url = URL.createObjectURL(file);
@@ -179,13 +303,124 @@ function App() {
     setLoading(false);
   };
 
+  const handleTextItemToggle = (globalIndex) => {
+    setTextItemStates(prev => ({
+      ...prev,
+      [globalIndex]: {
+        ...prev[globalIndex],
+        visible: !(prev[globalIndex]?.visible ?? true) // Default to visible if not set
+      }
+    }));
+  };
+
+  const handleFieldNameChange = (globalIndex, fieldName) => {
+    setTextItemStates(prev => ({
+      ...prev,
+      [globalIndex]: {
+        ...prev[globalIndex],
+        fieldName: fieldName,
+        visible: prev[globalIndex]?.visible ?? true // Default to visible if not set
+      }
+    }));
+  };
+
+  const isTextItemVisible = (globalIndex) => {
+    return textItemStates[globalIndex]?.visible ?? true; // Default to visible
+  };
+
+  const getTextItemFieldName = (globalIndex) => {
+    return textItemStates[globalIndex]?.fieldName ?? '';
+  };
+
+  const handleManualSelection = async (selection) => {
+    try {
+      setLoading(true);
+      
+      // Get the canvas image data as base64
+      const canvas = selection.canvas;
+      const imageDataUrl = canvas.toDataURL('image/png');
+      
+      // For manual selection, use the coordinates as-is from the canvas
+      // The backend will handle coordinate scaling based on the actual image data
+      const adjustedCoords = {
+        startX: selection.startX,
+        startY: selection.startY,
+        endX: selection.endX,
+        endY: selection.endY
+      };
+      
+      const requestData = {
+        page_data: imageDataUrl,
+        coordinates: adjustedCoords,
+        page_index: selection.pageIndex
+      };
+      
+      const response = await axios.post('api/ocr/manual/', requestData, {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      });
+      
+      if (response.data.success) {
+        const newResults = response.data.detections || [];
+        setManualOcrResults(prev => [...prev, ...newResults]);
+        console.log(`Manual OCR found ${newResults.length} text regions in selected area`);
+      } else {
+        setError(response.data.message || 'Manual OCR processing failed.');
+      }
+    } catch (err) {
+      console.error("Manual OCR Error:", err);
+      let errorMsg = 'Manual OCR processing failed.';
+      if (err.response) {
+        errorMsg = err.response.data.detail || err.response.data.message || `Server error: ${err.response.status}`;
+      } else if (err.request) {
+        errorMsg = 'No response from server. Check network or backend status.';
+      }
+      setError(errorMsg);
+    }
+    setLoading(false);
+  };
+
   const downloadJsonResults = () => {
-    if (!ocrResults) {
+    if (!ocrResults && manualOcrResults.length === 0) {
       setError('No OCR results to download.');
       return;
     }
     try {
-      const jsonString = JSON.stringify(ocrResults, null, 2);
+      // Filter automatic OCR results to only include visible items
+      const filteredAutomaticOcr = (ocrResults || []).map(page => ({
+        ...page,
+        detections: page.detections.map((detection, detectionIndex) => {
+          const globalIndex = (page.page_number - 1) * 1000 + detectionIndex;
+          const fieldName = getTextItemFieldName(globalIndex);
+          return {
+            ...detection,
+            globalIndex,
+            visible: isTextItemVisible(globalIndex),
+            ...(fieldName && { field_name: fieldName })
+          };
+        }).filter(item => item.visible).map(({ visible, globalIndex, ...detection }) => detection)
+      })).filter(page => page.detections.length > 0); // Remove pages with no visible detections
+
+      // Filter manual OCR results to only include visible items
+      const filteredManualOcr = manualOcrResults.map((detection, detectionIndex) => {
+        const globalIndex = -1000 - detectionIndex;
+        const fieldName = getTextItemFieldName(globalIndex);
+        return {
+          ...detection,
+          globalIndex,
+          visible: isTextItemVisible(globalIndex),
+          ...(fieldName && { field_name: fieldName })
+        };
+      }).filter(item => item.visible).map(({ visible, globalIndex, ...detection }) => detection);
+
+      const allResults = {
+        automatic_ocr: filteredAutomaticOcr,
+        manual_ocr: filteredManualOcr
+      };
+
+      const jsonString = JSON.stringify(allResults, null, 2);
       const blob = new Blob([jsonString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -213,7 +448,7 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>Full-Stack OCR Application</h1>
+        <h1>OnPrem Document AI Demo</h1>
       </header>
       <div className="container">
         <FileUploader 
@@ -235,17 +470,68 @@ function App() {
           </div>
         )}
 
-        {ocrResults && ocrResults.length > 0 && (
-          <div className="results-actions">
+        {(ocrResults && ocrResults.length > 0) || manualOcrResults.length > 0 ? (
+          <div className="results-actions" style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '10px',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '20px 0',
+            padding: '15px',
+            backgroundColor: '#f8f9fa',
+            borderRadius: '8px',
+            border: '1px solid #dee2e6'
+          }}>
             <button 
               onClick={() => setShowOcrResults(!showOcrResults)}
               disabled={loading}
               style={{ 
-                backgroundColor: showOcrResults ? '#007bff' : '#6c757d'
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 16px',
+                fontSize: '14px',
+                fontWeight: '500',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s ease',
+                backgroundColor: showOcrResults ? '#007bff' : '#6c757d',
+                color: 'white',
+                opacity: loading ? 0.6 : 1,
+                width: '200px',
+                height: '48px',
+                justifyContent: 'center'
               }}
             >
-              <span className="button-icon">{showOcrResults ? '🙈' : '👁️'}</span>
+              <span style={{ fontSize: '16px' }}>{showOcrResults ? '🙈' : '👁️'}</span>
               {showOcrResults ? 'Hide OCR Results' : 'Show OCR Results'}
+            </button>
+            <button 
+              onClick={() => setIsManualSelectionMode(!isManualSelectionMode)}
+              disabled={loading}
+              style={{ 
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 16px',
+                fontSize: '14px',
+                fontWeight: '500',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s ease',
+                backgroundColor: isManualSelectionMode ? '#dc3545' : '#fd7e14',
+                color: 'white',
+                opacity: loading ? 0.6 : 1,
+                width: '200px',
+                height: '48px',
+                justifyContent: 'center'
+              }}
+            >
+              <span style={{ fontSize: '16px' }}>{isManualSelectionMode ? '❌' : '🎯'}</span>
+              {isManualSelectionMode ? 'Exit Manual Selection' : 'Manual Selection Mode'}
             </button>
             <button 
               onClick={() => {
@@ -255,25 +541,54 @@ function App() {
               }}
               disabled={loading}
               style={{ 
-                marginLeft: '10px',
-                backgroundColor: '#28a745'
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 16px',
+                fontSize: '14px',
+                fontWeight: '500',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s ease',
+                backgroundColor: '#28a745',
+                color: 'white',
+                opacity: loading ? 0.6 : 1,
+                width: '200px',
+                height: '48px',
+                justifyContent: 'center'
               }}
             >
-              <span className="button-icon">📝</span>
-              Display Detected Text
+              <span style={{ fontSize: '16px' }}>📝</span>
+              Select Necessary Fields
             </button>
             <button 
               onClick={downloadJsonResults} 
-              disabled={loading || !ocrResults}
+              disabled={loading || (!ocrResults && manualOcrResults.length === 0)}
               style={{ 
-                marginLeft: '10px'
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 16px',
+                fontSize: '14px',
+                fontWeight: '500',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: (loading || (!ocrResults && manualOcrResults.length === 0)) ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s ease',
+                backgroundColor: '#6f42c1',
+                color: 'white',
+                opacity: (loading || (!ocrResults && manualOcrResults.length === 0)) ? 0.6 : 1,
+                width: '200px',
+                height: '48px',
+                justifyContent: 'center'
               }}
             >
-              <span className="button-icon">⬇️</span>
+              <span style={{ fontSize: '16px' }}>⬇️</span>
               Result Download (JSON)
             </button>
           </div>
-        )}
+        ) : null}
 
         {fileUrl && (
           <DocumentViewer 
@@ -284,13 +599,39 @@ function App() {
             highlightedDetectionIndex={highlightedDetectionIndex}
             showOnlyHighlighted={showOnlyHighlighted}
             showTextDialog={showTextDialog}
+            isManualSelectionMode={isManualSelectionMode}
+            onManualSelection={handleManualSelection}
+            manualOcrResults={manualOcrResults}
+            isTextItemVisible={isTextItemVisible}
           />
         )}
 
-        {showTextDialog && ocrResults && (
+        {isManualSelectionMode && (
+          <div className="manual-selection-info" style={{
+            marginTop: '10px',
+            padding: '10px',
+            backgroundColor: '#fff3cd',
+            border: '1px solid #ffeaa7',
+            borderRadius: '5px',
+            fontSize: '14px'
+          }}>
+            <strong>Manual Selection Mode Active:</strong> Click and drag on the document to select an area for additional OCR processing.
+            {manualOcrResults.length > 0 && (
+              <div style={{ marginTop: '5px' }}>
+                Found {manualOcrResults.length} additional text region(s) from manual selections.
+              </div>
+            )}
+          </div>
+        )}
+
+        {showTextDialog && (ocrResults || manualOcrResults.length > 0) && (
           <DraggableTextDialog 
-            ocrResults={ocrResults}
+            ocrResults={ocrResults || []}
+            manualOcrResults={manualOcrResults}
             highlightedDetectionIndex={highlightedDetectionIndex}
+            textItemStates={textItemStates}
+            onTextItemToggle={handleTextItemToggle}
+            onFieldNameChange={handleFieldNameChange}
             onClose={() => {
               setShowTextDialog(false);
               setShowOnlyHighlighted(false);

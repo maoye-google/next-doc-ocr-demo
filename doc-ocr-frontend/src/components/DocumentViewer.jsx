@@ -25,15 +25,114 @@ const drawBoundingBox = (ctx, box, text, score, imageScale, isHighlighted = fals
   ctx.fillText(`${text} (${score.toFixed(2)})`, (box[0][0] * imageScale) + 5, (box[0][1] * imageScale) - 5);
 };
 
-function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, highlightedDetectionIndex = null, showOnlyHighlighted = false, showTextDialog = false }) {
+// Helper to draw manual OCR boxes with green color
+const drawManualBoundingBox = (ctx, box, text, score, imageScale, isHighlighted = false) => {
+  ctx.beginPath();
+  // Box format: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+  ctx.moveTo(box[0][0] * imageScale, box[0][1] * imageScale);
+  ctx.lineTo(box[1][0] * imageScale, box[1][1] * imageScale);
+  ctx.lineTo(box[2][0] * imageScale, box[2][1] * imageScale);
+  ctx.lineTo(box[3][0] * imageScale, box[3][1] * imageScale);
+  ctx.closePath();
+  
+  ctx.strokeStyle = isHighlighted ? 'rgba(255, 215, 0, 0.9)' : 'rgba(0, 255, 0, 0.8)'; // Gold for highlighted, green for manual
+  ctx.lineWidth = isHighlighted ? 3 : 2;
+  ctx.stroke();
+
+  // Display text and score
+  ctx.fillStyle = isHighlighted ? 'rgba(255, 215, 0, 0.9)' : 'rgba(0, 255, 0, 0.8)';
+  ctx.font = `${12 * imageScale}px Arial`;
+  ctx.fillText(`${text} (${score.toFixed(2)}) [M]`, (box[0][0] * imageScale) + 5, (box[0][1] * imageScale) - 5);
+};
+
+function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, highlightedDetectionIndex = null, showOnlyHighlighted = false, showTextDialog = false, isManualSelectionMode = false, onManualSelection = null, manualOcrResults = [], isTextItemVisible = () => true }) {
   const imageCanvasRef = useRef(null); // For single image display
   const pdfPagesRef = useRef([]); // For PDF pages, array of canvas refs
   const [pdfPagesData, setPdfPagesData] = useState([]); // Stores { url, width, height } for each PDF page
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0, naturalWidth: 0, naturalHeight: 0 });
   const documentViewerRef = useRef(null);
+  
+  // Manual selection states
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [selectionStart, setSelectionStart] = useState(null);
+  const [selectionEnd, setSelectionEnd] = useState(null);
+  const [currentSelection, setCurrentSelection] = useState(null);
 
   // Debug logging
   console.log('DocumentViewer props:', { fileUrl, fileType, ocrResults: ocrResults?.length });
+
+  // Helper function to get mouse coordinates relative to canvas
+  const getCanvasCoordinates = (event, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY
+    };
+  };
+
+  // Helper function to draw selection rectangle
+  const drawSelectionRectangle = (ctx, start, end) => {
+    if (!start || !end) return;
+    
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.8)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(
+      Math.min(start.x, end.x),
+      Math.min(start.y, end.y),
+      Math.abs(end.x - start.x),
+      Math.abs(end.y - start.y)
+    );
+    ctx.setLineDash([]);
+  };
+
+  // Mouse event handlers for manual selection
+  const handleMouseDown = (event, canvas, pageIndex = 0) => {
+    if (!isManualSelectionMode) return;
+    
+    const coords = getCanvasCoordinates(event, canvas);
+    setIsDrawing(true);
+    setSelectionStart(coords);
+    setSelectionEnd(coords);
+    setCurrentSelection({ pageIndex, canvas });
+  };
+
+  const handleMouseMove = (event, canvas) => {
+    if (!isManualSelectionMode || !isDrawing) return;
+    
+    const coords = getCanvasCoordinates(event, canvas);
+    setSelectionEnd(coords);
+  };
+
+  const handleMouseUp = (event, canvas, pageIndex = 0) => {
+    if (!isManualSelectionMode || !isDrawing) return;
+    
+    setIsDrawing(false);
+    
+    if (selectionStart && selectionEnd) {
+      const selection = {
+        pageIndex,
+        startX: Math.min(selectionStart.x, selectionEnd.x),
+        startY: Math.min(selectionStart.y, selectionEnd.y),
+        endX: Math.max(selectionStart.x, selectionEnd.x),
+        endY: Math.max(selectionStart.y, selectionEnd.y),
+        canvas
+      };
+      
+      // Only trigger selection if area is significant
+      const width = selection.endX - selection.startX;
+      const height = selection.endY - selection.startY;
+      if (width > 10 && height > 10 && onManualSelection) {
+        onManualSelection(selection);
+      }
+    }
+    
+    setSelectionStart(null);
+    setSelectionEnd(null);
+    setCurrentSelection(null);
+  };
 
   // Effect for rendering single image and its OCR results
   useEffect(() => {
@@ -62,6 +161,7 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
             // 1. If text dialog is open AND showOnlyHighlighted is true: only show highlighted boxes
             // 2. If text dialog is open AND showOnlyHighlighted is false: hide all boxes
             // 3. If text dialog is closed: follow normal showOcrResults logic
+            // 4. Always check visibility state for the text item
             let shouldShowBox;
             if (showTextDialog) {
               shouldShowBox = showOnlyHighlighted && isHighlighted;
@@ -69,10 +169,38 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
               shouldShowBox = showOcrResults;
             }
             
-            if (shouldShowBox) {
+            // Only show if both conditions are met: should show AND item is visible
+            if (shouldShowBox && isTextItemVisible(globalIndex)) {
               drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale, isHighlighted);
             }
           });
+        }
+
+        // Draw manual OCR results
+        if (manualOcrResults && manualOcrResults.length > 0) {
+          const imageScale = canvas.width / img.naturalWidth;
+          manualOcrResults.forEach((detection, detectionIndex) => {
+            // Use negative indices for manual results to distinguish from automatic OCR
+            const globalIndex = -1000 - detectionIndex;
+            const isHighlighted = highlightedDetectionIndex === globalIndex;
+            
+            let shouldShowBox;
+            if (showTextDialog) {
+              shouldShowBox = showOnlyHighlighted && isHighlighted;
+            } else {
+              shouldShowBox = showOcrResults;
+            }
+            
+            // Only show if both conditions are met: should show AND item is visible
+            if (shouldShowBox && isTextItemVisible(globalIndex)) {
+              drawManualBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale, isHighlighted);
+            }
+          });
+        }
+
+        // Draw manual selection rectangle if in selection mode
+        if (isManualSelectionMode && isDrawing && selectionStart && selectionEnd && currentSelection?.canvas === canvas) {
+          drawSelectionRectangle(ctx, selectionStart, selectionEnd);
         }
       };
       img.onerror = () => {
@@ -81,6 +209,67 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
       img.src = fileUrl;
     }
   }, [fileUrl, fileType, ocrResults, showOcrResults, showOnlyHighlighted, highlightedDetectionIndex, showTextDialog, imageCanvasRef]);
+
+  // Effect to redraw selection rectangle during drawing
+  useEffect(() => {
+    if (fileType === 'image' && imageCanvasRef.current && isManualSelectionMode && isDrawing && selectionStart && selectionEnd && currentSelection?.canvas === imageCanvasRef.current) {
+      const canvas = imageCanvasRef.current;
+      const ctx = canvas.getContext('2d');
+      
+      // Redraw the original image first
+      const img = new Image();
+      img.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        
+        // Draw OCR boxes if needed
+        if (ocrResults && ocrResults.length > 0 && ocrResults[0].page_number === 1) {
+          const imageScale = canvas.width / img.naturalWidth;
+          ocrResults[0].detections.forEach((detection, detectionIndex) => {
+            const globalIndex = 0 * 1000 + detectionIndex;
+            const isHighlighted = highlightedDetectionIndex === globalIndex;
+            
+            let shouldShowBox;
+            if (showTextDialog) {
+              shouldShowBox = showOnlyHighlighted && isHighlighted;
+            } else {
+              shouldShowBox = showOcrResults;
+            }
+            
+            // Only show if both conditions are met: should show AND item is visible
+            if (shouldShowBox && isTextItemVisible(globalIndex)) {
+              drawBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale, isHighlighted);
+            }
+          });
+        }
+        
+        // Draw manual OCR results
+        if (manualOcrResults && manualOcrResults.length > 0) {
+          const imageScale = canvas.width / img.naturalWidth;
+          manualOcrResults.forEach((detection, detectionIndex) => {
+            const globalIndex = -1000 - detectionIndex;
+            const isHighlighted = highlightedDetectionIndex === globalIndex;
+            
+            let shouldShowBox;
+            if (showTextDialog) {
+              shouldShowBox = showOnlyHighlighted && isHighlighted;
+            } else {
+              shouldShowBox = showOcrResults;
+            }
+            
+            // Only show if both conditions are met: should show AND item is visible
+            if (shouldShowBox && isTextItemVisible(globalIndex)) {
+              drawManualBoundingBox(ctx, detection.box, detection.text, detection.score, imageScale, isHighlighted);
+            }
+          });
+        }
+        
+        // Draw selection rectangle
+        drawSelectionRectangle(ctx, selectionStart, selectionEnd);
+      };
+      img.src = fileUrl;
+    }
+  }, [isManualSelectionMode, isDrawing, selectionStart, selectionEnd, currentSelection, fileType, fileUrl, ocrResults, manualOcrResults, showOcrResults, showTextDialog, showOnlyHighlighted, highlightedDetectionIndex, isTextItemVisible]);
 
   // Effect for rendering PDF pages and their OCR results
   useEffect(() => {
@@ -177,6 +366,7 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
                 // 1. If text dialog is open AND showOnlyHighlighted is true: only show highlighted boxes
                 // 2. If text dialog is open AND showOnlyHighlighted is false: hide all boxes
                 // 3. If text dialog is closed: follow normal showOcrResults logic
+                // 4. Always check visibility state for the text item
                 let shouldShowBox;
                 if (showTextDialog) {
                   shouldShowBox = showOnlyHighlighted && isHighlighted;
@@ -184,7 +374,8 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
                   shouldShowBox = showOcrResults;
                 }
                 
-                if (shouldShowBox) {
+                // Only show if both conditions are met: should show AND item is visible
+                if (shouldShowBox && isTextItemVisible(globalIndex)) {
                   const isJapaneseText = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text);
                   if (isJapaneseText) {
                     // Adjust the box coordinates for Japanese text by adding a fixed offset to the height
@@ -198,12 +389,128 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
                 }
               });
             }
+
+            // Draw manual OCR results for this page
+            if (manualOcrResults && manualOcrResults.length > 0) {
+              const backendDPI = 120;
+              const frontendScale = 1.5;
+              const imageScale = (frontendScale * 72) / backendDPI;
+              
+              manualOcrResults.forEach((detection, detectionIndex) => {
+                const globalIndex = -1000 - detectionIndex;
+                const isHighlighted = highlightedDetectionIndex === globalIndex;
+                
+                let shouldShowBox;
+                if (showTextDialog) {
+                  shouldShowBox = showOnlyHighlighted && isHighlighted;
+                } else {
+                  shouldShowBox = showOcrResults;
+                }
+                
+                // Only show if both conditions are met: should show AND item is visible
+                if (shouldShowBox && isTextItemVisible(globalIndex)) {
+                  const adjustedBox = detection.box.map(point => [point[0]*1.07, point[1]*1.065]);
+                  drawManualBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
+                }
+              });
+            }
+
+            // Draw manual selection rectangle if in selection mode
+            if (isManualSelectionMode && isDrawing && selectionStart && selectionEnd && currentSelection?.canvas === canvasRef && currentSelection?.pageIndex === index) {
+              drawSelectionRectangle(ctx, selectionStart, selectionEnd);
+            }
           };
           img.src = pageData.dataUrl;
         }
       });
     }
-  }, [pdfPagesData, ocrResults, showOcrResults, showOnlyHighlighted, highlightedDetectionIndex, showTextDialog, fileType]);
+  }, [pdfPagesData, ocrResults, manualOcrResults, showOcrResults, showOnlyHighlighted, highlightedDetectionIndex, showTextDialog, fileType, isTextItemVisible]);
+
+  // Effect to redraw PDF page selection rectangles during drawing
+  useEffect(() => {
+    if (fileType === 'pdf' && pdfPagesData.length > 0 && isManualSelectionMode && isDrawing && selectionStart && selectionEnd && currentSelection) {
+      const pageIndex = currentSelection.pageIndex;
+      const canvas = currentSelection.canvas;
+      const pageData = pdfPagesData[pageIndex];
+      
+      if (canvas && pageData) {
+        const ctx = canvas.getContext('2d');
+        const img = new Image();
+        img.onload = () => {
+          // Redraw the page image
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          
+          // Draw OCR boxes if needed
+          const pageResult = ocrResults?.find(r => r.page_number === (pageIndex + 1));
+          if (showOcrResults && pageResult) {
+            const backendDPI = 120;
+            const frontendScale = 1.5;
+            
+            const hasJapanese = pageResult.detections.some(detection => 
+              /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text)
+            );
+            
+            let imageScale;
+            if (hasJapanese) {
+              const baseScale = (frontendScale * 75) / backendDPI;
+              imageScale = baseScale * 0.9;
+            } else {
+              imageScale = (frontendScale * 72) / backendDPI;
+            }
+            
+            pageResult.detections.forEach((detection, detectionIndex) => {
+              const globalIndex = pageIndex * 1000 + detectionIndex;
+              const isHighlighted = highlightedDetectionIndex === globalIndex;
+              
+              let shouldShowBox;
+              if (showTextDialog) {
+                shouldShowBox = showOnlyHighlighted && isHighlighted;
+              } else {
+                shouldShowBox = showOcrResults;
+              }
+              
+              // Only show if both conditions are met: should show AND item is visible
+              if (shouldShowBox && isTextItemVisible(globalIndex)) {
+                const isJapaneseText = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text);
+                const adjustedBox = detection.box.map(point => [point[0]*1.07, point[1]*1.065]);
+                drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
+              }
+            });
+          }
+          
+          // Draw manual OCR results
+          if (manualOcrResults && manualOcrResults.length > 0) {
+            const backendDPI = 120;
+            const frontendScale = 1.5;
+            const imageScale = (frontendScale * 72) / backendDPI;
+            
+            manualOcrResults.forEach((detection, detectionIndex) => {
+              const globalIndex = -1000 - detectionIndex;
+              const isHighlighted = highlightedDetectionIndex === globalIndex;
+              
+              let shouldShowBox;
+              if (showTextDialog) {
+                shouldShowBox = showOnlyHighlighted && isHighlighted;
+              } else {
+                shouldShowBox = showOcrResults;
+              }
+              
+              // Only show if both conditions are met: should show AND item is visible
+              if (shouldShowBox && isTextItemVisible(globalIndex)) {
+                const adjustedBox = detection.box.map(point => [point[0]*1.07, point[1]*1.065]);
+                drawManualBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
+              }
+            });
+          }
+          
+          // Draw selection rectangle
+          drawSelectionRectangle(ctx, selectionStart, selectionEnd);
+        };
+        img.src = pageData.dataUrl;
+      }
+    }
+  }, [fileType, pdfPagesData, isManualSelectionMode, isDrawing, selectionStart, selectionEnd, currentSelection, ocrResults, manualOcrResults, showOcrResults, showTextDialog, showOnlyHighlighted, highlightedDetectionIndex, isTextItemVisible]);
 
   // Auto-scroll to highlighted detection
   useEffect(() => {
@@ -235,7 +542,13 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
       <h3>Document Preview</h3>
       {fileType === 'image' && (
         <div className="image-container">
-          <canvas ref={imageCanvasRef} />
+          <canvas 
+            ref={imageCanvasRef}
+            style={{ cursor: isManualSelectionMode ? 'crosshair' : 'default' }}
+            onMouseDown={(e) => handleMouseDown(e, imageCanvasRef.current, 0)}
+            onMouseMove={(e) => handleMouseMove(e, imageCanvasRef.current)}
+            onMouseUp={(e) => handleMouseUp(e, imageCanvasRef.current, 0)}
+          />
         </div>
       )}
       {fileType === 'pdf' && (
@@ -261,7 +574,14 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
                   }}
                   width={page.width} 
                   height={page.height}
-                  style={{ maxWidth: '100%', height: 'auto' }}
+                  style={{ 
+                    maxWidth: '100%', 
+                    height: 'auto',
+                    cursor: isManualSelectionMode ? 'crosshair' : 'default'
+                  }}
+                  onMouseDown={(e) => handleMouseDown(e, pdfPagesRef.current[index], index)}
+                  onMouseMove={(e) => handleMouseMove(e, pdfPagesRef.current[index])}
+                  onMouseUp={(e) => handleMouseUp(e, pdfPagesRef.current[index], index)}
                 />
               </div>
             ))

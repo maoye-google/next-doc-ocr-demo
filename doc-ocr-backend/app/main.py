@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from paddleocr import PaddleOCR
 from typing import List, Tuple, Any, Optional
 import logging
+import base64
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -61,6 +62,16 @@ class OCRResponse(BaseModel):
     success: bool = Field(..., description="Boolean indicating success")
     message: str = Field(..., description="Status or error message")
     results: Optional[List[PageResult]] = Field(None, description="OCR results per page")
+
+class ManualOCRRequest(BaseModel):
+    page_data: str = Field(..., description="Base64 encoded image data")
+    coordinates: dict = Field(..., description="Selection coordinates {startX, startY, endX, endY}")
+    page_index: int = Field(..., description="Page index (0-based)")
+
+class ManualOCRResponse(BaseModel):
+    success: bool = Field(..., description="Boolean indicating success")
+    message: str = Field(..., description="Status or error message")
+    detections: Optional[List[OCRDetection]] = Field(None, description="OCR results for the selected area")
 
 # --- Helper Functions ---
 
@@ -179,6 +190,89 @@ def convert_pdf_to_images(file_bytes: bytes) -> List[bytes]:
         raise HTTPException(status_code=500, detail=f"PDF processing failed: {str(e)}")
     return images
 
+def process_cropped_area_with_ocr(image_bytes: bytes, coordinates: dict) -> List[OCRDetection]:
+    """Processes a cropped area of an image using PaddleOCR and returns detections."""
+    try:
+        if not ocr_instance:
+            raise HTTPException(status_code=500, detail="OCR service not initialized.")
+        
+        # Convert image bytes to PIL Image
+        image = Image.open(io.BytesIO(image_bytes))
+        if image.mode == 'P' or image.mode == 'RGBA':
+            image = image.convert('RGB')
+        
+        # Crop the image to the specified coordinates
+        startX = int(coordinates['startX'])
+        startY = int(coordinates['startY'])
+        endX = int(coordinates['endX'])
+        endY = int(coordinates['endY'])
+        
+        # Ensure coordinates are within image bounds
+        startX = max(0, min(startX, image.width))
+        startY = max(0, min(startY, image.height))
+        endX = max(startX, min(endX, image.width))
+        endY = max(startY, min(endY, image.height))
+        
+        cropped_image = image.crop((startX, startY, endX, endY))
+        
+        # Convert to numpy array for PaddleOCR
+        img_np = np.array(cropped_image)
+        
+        logger.info(f"Processing cropped area: ({startX},{startY}) to ({endX},{endY}), cropped size: {img_np.shape}")
+        
+        # Perform OCR on the cropped area
+        result = ocr_instance.ocr(img_np)
+        
+        detections = []
+        
+        # Handle the new PaddleOCR API - check if result is a list containing a dictionary
+        if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+            result = result[0]  # Extract the dictionary from the list
+        
+        if isinstance(result, dict):
+            # Extract polygons and recognized text
+            if 'rec_polys' in result and 'rec_texts' in result and 'rec_scores' in result:
+                polygons = result['rec_polys']
+                texts = result['rec_texts']
+                scores = result['rec_scores']
+                
+                # Process each detection and adjust coordinates back to original image space
+                for i, (polygon, text, score) in enumerate(zip(polygons, texts, scores)):
+                    # Convert polygon to box format and adjust coordinates
+                    if len(polygon) >= 4:
+                        # Adjust coordinates back to original image space
+                        adjusted_box = [
+                            [float(polygon[j][0]) + startX, float(polygon[j][1]) + startY] 
+                            for j in range(4)
+                        ]
+                        detections.append(OCRDetection(box=adjusted_box, text=str(text), score=float(score)))
+                        
+        elif isinstance(result, list):
+            # Handle legacy format
+            if len(result) > 0 and isinstance(result[0], list):
+                ocr_lines = result[0]
+            else:
+                ocr_lines = result
+                
+            for line_info in ocr_lines:
+                if line_info and len(line_info) == 2:
+                    box = line_info[0]
+                    text, score = line_info[1]
+                    
+                    # Adjust coordinates back to original image space
+                    adjusted_box = [
+                        [float(p[0]) + startX, float(p[1]) + startY] 
+                        for p in box
+                    ]
+                    detections.append(OCRDetection(box=adjusted_box, text=str(text), score=float(score)))
+        
+        logger.info(f"Manual OCR found {len(detections)} detections in cropped area")
+        return detections
+        
+    except Exception as e:
+        logger.error(f"Error during manual OCR processing: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Manual OCR processing failed: {str(e)}")
+
 # --- API Endpoints ---
 
 @app.get("/", summary="Root endpoint", response_model=dict)
@@ -251,6 +345,36 @@ async def ocr_process_file(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"An unexpected error occurred while processing {file.filename}: {e}", exc_info=True)
         return OCRResponse(success=False, message=f"An unexpected error occurred: {str(e)}", results=None)
+
+@app.post("/api/ocr/manual/", summary="Process manually selected area for OCR", response_model=ManualOCRResponse)
+async def ocr_manual_area(request: ManualOCRRequest):
+    """
+    Accepts base64 image data and coordinates for a manually selected area,
+    performs OCR on that specific area, and returns structured results.
+    """
+    logger.info("=== MANUAL OCR ENDPOINT CALLED ===")
+    
+    if not ocr_instance:
+        logger.error("Manual OCR endpoint called but OCR instance is not available.")
+        return ManualOCRResponse(success=False, message="OCR service is not initialized or failed to load.", detections=None)
+
+    try:
+        # Decode base64 image data
+        image_data = base64.b64decode(request.page_data.split(',')[1] if ',' in request.page_data else request.page_data)
+        
+        logger.info(f"Processing manual selection: coordinates={request.coordinates}, page_index={request.page_index}")
+        
+        # Process the cropped area
+        detections = process_cropped_area_with_ocr(image_data, request.coordinates)
+        
+        message = f"Manual OCR processed successfully, found {len(detections)} text regions."
+        logger.info(f"Manual OCR completed: {len(detections)} detections")
+        
+        return ManualOCRResponse(success=True, message=message, detections=detections)
+
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during manual OCR: {e}", exc_info=True)
+        return ManualOCRResponse(success=False, message=f"An unexpected error occurred: {str(e)}", detections=None)
 
 if __name__ == "__main__":
     # This part is for local development testing (not used by Uvicorn in Docker)
