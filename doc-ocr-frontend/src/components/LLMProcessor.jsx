@@ -1,25 +1,58 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
 function LLMProcessor({ 
   selectedFile, 
   loading, 
   setLoading, 
-  setError 
+  setError,
+  currentJobId,
+  setCurrentJobId,
+  globalLoading,
+  setGlobalLoading
 }) {
   // LLM processing states
   const [llmModel, setLlmModel] = useState('gemini-2.0-flash');
-  const [currentJobId, setCurrentJobId] = useState(null);
+  // Remove local currentJobId state - use the shared one from App component
   const [jobStatus, setJobStatus] = useState(null);
   const [llmResults, setLlmResults] = useState(null);
   const [documentHistory, setDocumentHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [pollingInterval, setPollingInterval] = useState(null);
+  const [lastHistoryUpdate, setLastHistoryUpdate] = useState(null);
+
+  // Use refs to store the latest values for the interval callback
+  const currentJobIdRef = useRef(currentJobId);
+  const setGlobalLoadingRef = useRef(setGlobalLoading);
+  const setLoadingRef = useRef(setLoading);
+  const loadingRef = useRef(loading);
+  const pollingIntervalRef = useRef(pollingInterval);
+
+  // Update refs when values change
+  useEffect(() => {
+    currentJobIdRef.current = currentJobId;
+  }, [currentJobId]);
+
+  useEffect(() => {
+    setGlobalLoadingRef.current = setGlobalLoading;
+  }, [setGlobalLoading]);
+
+  useEffect(() => {
+    setLoadingRef.current = setLoading;
+  }, [setLoading]);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    pollingIntervalRef.current = pollingInterval;
+  }, [pollingInterval]);
 
   // Reset states when file changes
   useEffect(() => {
     if (selectedFile) {
-      setCurrentJobId(null);
+      // Only reset job states, not currentJobId (let App.jsx handle that)
       setJobStatus(null);
       setLlmResults(null);
       if (pollingInterval) {
@@ -29,9 +62,17 @@ function LLMProcessor({
     }
   }, [selectedFile, pollingInterval]);
 
-  // Load document history on component mount
+  // Load document history on component mount and start periodic refresh
   useEffect(() => {
     loadDocumentHistory();
+    
+    // Set up periodic refresh of document history every 10 seconds
+    const historyInterval = setInterval(loadDocumentHistory, 10000);
+    
+    // Cleanup interval on unmount
+    return () => {
+      clearInterval(historyInterval);
+    };
   }, []);
 
   // Cleanup polling on unmount
@@ -50,7 +91,8 @@ function LLMProcessor({
     }
 
     setLoading(true);
-    setError('');
+    setGlobalLoading(true); // Set global loading state
+    setError(''); // Clear any previous errors from App component too
     setLlmResults(null);
     setJobStatus(null);
 
@@ -68,6 +110,8 @@ function LLMProcessor({
 
       if (response.data.success && response.data.job_id) {
         setCurrentJobId(response.data.job_id);
+        // Immediately update the ref to ensure loadDocumentHistory can access it
+        currentJobIdRef.current = response.data.job_id;
         startPolling(response.data.job_id);
       } else {
         setError(response.data.message || 'LLM processing failed to start.');
@@ -87,36 +131,144 @@ function LLMProcessor({
   };
 
   const startPolling = (jobId) => {
-    const interval = setInterval(async () => {
+    
+    // Check status immediately first
+    const checkStatus = async () => {
       try {
         const response = await axios.get(`api/documents/${jobId}/status`);
         setJobStatus(response.data);
         
         if (response.data.status === 'completed') {
           setLlmResults(response.data.results);
+          
+          // Clear both loading states
+          setGlobalLoading(false);
           setLoading(false);
-          clearInterval(interval);
-          setPollingInterval(null);
-          loadDocumentHistory(); // Refresh history
+          
+          // Call the callback to update App component
+          if (onJobStatusUpdate) {
+            onJobStatusUpdate(jobId, 'completed', response.data.results);
+          }
+          
+          if (pollingInterval) {
+            clearInterval(pollingInterval);
+            setPollingInterval(null);
+          }
+          // Immediately refresh history when job completes
+          setTimeout(() => loadDocumentHistory(), 500);
+          return true; // Stop polling
         } else if (response.data.status === 'error') {
-          setError('LLM processing failed.');
+          
+          // Clear both loading states
+          setGlobalLoading(false);
           setLoading(false);
-          clearInterval(interval);
-          setPollingInterval(null);
+          
+          // Call the callback to update App component
+          if (onJobStatusUpdate) {
+            onJobStatusUpdate(jobId, 'error', null);
+          }
+          
+          if (pollingInterval) {
+            clearInterval(pollingInterval);
+            setPollingInterval(null);
+          }
+          // Also refresh history on error to show updated status
+          setTimeout(() => loadDocumentHistory(), 500);
+          return true; // Stop polling
+        } else {
+          return false; // Continue polling
         }
       } catch (err) {
         console.error('Polling error:', err);
-        // Continue polling on error
+        // Continue polling on error, but add some basic error handling
+        if (err.response && err.response.status === 404) {
+          console.error(`Job ${jobId} not found. Stopping polling.`);
+          setError('Job not found in system.');
+          setGlobalLoading(false);
+          setLoading(false);
+          if (pollingInterval) {
+            clearInterval(pollingInterval);
+            setPollingInterval(null);
+          }
+          return true; // Stop polling
+        }
+        return false; // Continue polling on other errors
       }
-    }, 5000); // Poll every 5 seconds
+    };
     
-    setPollingInterval(interval);
+    // Check immediately on start
+    checkStatus().then(shouldStop => {
+      if (shouldStop) {
+        return;
+      }
+      
+      // Start periodic polling
+      const interval = setInterval(async () => {
+        const shouldStop = await checkStatus();
+        if (shouldStop) {
+          clearInterval(interval);
+          setPollingInterval(null);
+        }
+      }, 3000); // Poll every 3 seconds for faster response
+      
+      setPollingInterval(interval);
+    });
   };
 
   const loadDocumentHistory = async () => {
     try {
       const response = await axios.get('api/documents/history');
       setDocumentHistory(response.data.documents || []);
+      setLastHistoryUpdate(new Date());
+      
+      // Check if current job is in the history and call callback
+      const currentJobId = currentJobIdRef.current;
+      const setGlobalLoading = setGlobalLoadingRef.current;
+      const setLoading = setLoadingRef.current;
+      const pollingInterval = pollingIntervalRef.current;
+
+      if (currentJobId && setGlobalLoading) {
+        const currentJob = response.data.documents.find(doc => doc.job_id === currentJobId);
+        if (currentJob) {
+          
+          if (currentJob.status === 'completed') {
+            
+            // Get full job results
+            try {
+              const jobResponse = await axios.get(`api/documents/${currentJobId}/status`);
+              setJobStatus(jobResponse.data);
+              setLlmResults(jobResponse.data.results);
+              
+              // Clear both loading states
+              setGlobalLoading(false);
+              if (setLoading) setLoading(false);
+              
+              // Clear polling if it's still running
+              if (pollingInterval) {
+                clearInterval(pollingInterval);
+                setPollingInterval(null);
+              }
+            } catch (err) {
+              console.error('Error fetching job results:', err);
+              // Clear loading anyway
+              setGlobalLoading(false);
+              if (setLoading) setLoading(false);
+            }
+          } else if (currentJob.status === 'error') {
+            
+            // Clear both loading states
+            setGlobalLoading(false);
+            if (setLoading) setLoading(false);
+            setError('LLM processing failed.');
+            
+            // Clear polling if it's still running
+            if (pollingInterval) {
+              clearInterval(pollingInterval);
+              setPollingInterval(null);
+            }
+          }
+        }
+      }
     } catch (err) {
       console.error('Error loading document history:', err);
     }
@@ -153,6 +305,7 @@ function LLMProcessor({
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
+
 
   return (
     <div>
@@ -199,7 +352,7 @@ function LLMProcessor({
 
           <button 
             onClick={handleLlmUpload}
-            disabled={loading || !selectedFile}
+            disabled={globalLoading || !selectedFile}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -209,23 +362,26 @@ function LLMProcessor({
               fontWeight: '500',
               border: 'none',
               borderRadius: '6px',
-              cursor: (loading || !selectedFile) ? 'not-allowed' : 'pointer',
+              cursor: (globalLoading || !selectedFile) ? 'not-allowed' : 'pointer',
               transition: 'all 0.2s ease',
-              backgroundColor: loading ? '#6c757d' : '#17a2b8',
+              backgroundColor: globalLoading ? '#6c757d' : '#17a2b8',
               color: 'white',
-              opacity: (loading || !selectedFile) ? 0.6 : 1
+              opacity: (globalLoading || !selectedFile) ? 0.6 : 1
             }}
           >
             <span style={{ fontSize: '18px' }}>🤖</span>
-            {loading && currentJobId ? 'Processing with LLM...' : 'Upload for Process (LLM)'}
+            {globalLoading && currentJobId ? 'Processing with LLM...' : 'Upload for Process (LLM)'}
           </button>
+
 
           {/* Job Status Display */}
           {currentJobId && (
             <div style={{ marginTop: '15px' }}>
-              <p style={{ margin: '5px 0', fontSize: '14px', color: '#495057' }}>
-                <strong>Job ID:</strong> {currentJobId}
-              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                <p style={{ margin: '0', fontSize: '14px', color: '#495057' }}>
+                  <strong>Job ID:</strong> {currentJobId}
+                </p>
+              </div>
               {jobStatus && (
                 <div style={{ 
                   padding: '10px', 
@@ -241,15 +397,24 @@ function LLMProcessor({
                       {jobStatus.status}
                     </span>
                   </p>
-                  {jobStatus.total_pages && (
-                    <p style={{ margin: '5px 0', fontSize: '14px' }}>
-                      <strong>Total Pages:</strong> {jobStatus.total_pages}
-                    </p>
-                  )}
-                  {jobStatus.processed_pages !== undefined && (
-                    <p style={{ margin: '5px 0', fontSize: '14px' }}>
-                      <strong>Processed Pages:</strong> {jobStatus.processed_pages}
-                    </p>
+                  {jobStatus.progress && (
+                    <>
+                      {jobStatus.progress.total_pages && (
+                        <p style={{ margin: '5px 0', fontSize: '14px' }}>
+                          <strong>Total Pages:</strong> {jobStatus.progress.total_pages}
+                        </p>
+                      )}
+                      {jobStatus.progress.processed_pages !== undefined && (
+                        <p style={{ margin: '5px 0', fontSize: '14px' }}>
+                          <strong>Processed Pages:</strong> {jobStatus.progress.processed_pages}
+                        </p>
+                      )}
+                      {jobStatus.progress.percentage !== undefined && (
+                        <p style={{ margin: '5px 0', fontSize: '14px' }}>
+                          <strong>Progress:</strong> {jobStatus.progress.percentage.toFixed(1)}%
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -342,7 +507,19 @@ function LLMProcessor({
             border: '1px solid #dee2e6'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-              <h4 style={{ margin: 0, color: '#495057' }}>Document Processing History</h4>
+              <div>
+                <h4 style={{ margin: 0, color: '#495057' }}>Document Processing History</h4>
+                {lastHistoryUpdate && (
+                  <p style={{ 
+                    margin: '2px 0 0 0', 
+                    fontSize: '11px', 
+                    color: '#6c757d',
+                    fontStyle: 'italic'
+                  }}>
+                    Last updated: {lastHistoryUpdate.toLocaleTimeString()}
+                  </p>
+                )}
+              </div>
               {documentHistory.length > 0 && (
                 <button 
                   onClick={deleteAllDocuments}

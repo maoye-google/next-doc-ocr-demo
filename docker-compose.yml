@@ -61,8 +61,11 @@ services:
     networks:
       - ocr_network
     depends_on:
-      - kafka
-      - mongodb
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+    restart: on-failure
 
   doc-ocr-processing:
     container_name: doc-ocr-processing

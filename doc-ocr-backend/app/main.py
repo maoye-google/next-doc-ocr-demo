@@ -55,9 +55,23 @@ app = FastAPI(title="OCR Backend Service", version="2.0.0")
 async def startup_event():
     """Initialize connections and start background tasks on startup"""
     global job_polling_task
-    init_connections()
-    # Start job completion monitoring
-    job_polling_task = asyncio.create_task(job_completion_monitor())
+    logger.info("=== APPLICATION STARTUP EVENT TRIGGERED ===")
+    print("=== APPLICATION STARTUP EVENT TRIGGERED ===")  # Also print to stdout
+    
+    try:
+        init_connections()
+        logger.info("=== CONNECTIONS INITIALIZED ===")
+        print("=== CONNECTIONS INITIALIZED ===")
+        
+        # Start job completion monitoring
+        job_polling_task = asyncio.create_task(job_completion_monitor())
+        logger.info("=== JOB POLLING TASK STARTED ===")
+        print("=== JOB POLLING TASK STARTED ===")
+        
+    except Exception as e:
+        logger.error(f"=== STARTUP FAILED: {e} ===")
+        print(f"=== STARTUP FAILED: {e} ===")
+        raise
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -158,28 +172,60 @@ def init_connections():
     """Initialize database and message queue connections"""
     global kafka_producer, mongo_client, mongo_db
     
+    logger.info("=== INITIALIZING CONNECTIONS ===")
+    
     try:
         # Initialize MongoDB
-        logger.info(f"Connecting to MongoDB: {MONGODB_URL}")
+        logger.info(f"=== CONNECTING TO MONGODB ===")
+        logger.info(f"MongoDB URL: {MONGODB_URL}")
         mongo_client = MongoClient(MONGODB_URL)
         mongo_db = mongo_client.get_default_database()
         
         # Test MongoDB connection
         mongo_client.admin.command('ping')
-        logger.info("MongoDB connection successful")
+        logger.info("=== MONGODB CONNECTION SUCCESSFUL ===")
         
         # Initialize database schema
         init_database_schema()
         
-        # Initialize Kafka Producer
-        kafka_producer = KafkaProducer(
-            bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
-            value_serializer=lambda v: json.dumps(v).encode('utf-8')
-        )
-        logger.info("Kafka producer initialized")
+        # Initialize Kafka Producer with retry logic
+        logger.info(f"=== CONNECTING TO KAFKA ===")
+        logger.info(f"Kafka bootstrap servers: {KAFKA_BOOTSTRAP_SERVERS}")
+        
+        max_retries = 5
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                kafka_producer = KafkaProducer(
+                    bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+                    value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+                    retries=3,
+                    request_timeout_ms=30000,
+                    api_version=(0, 10, 1)
+                )
+                logger.info("=== KAFKA PRODUCER INITIALIZED SUCCESSFULLY ===")
+                logger.info(f"=== KAFKA PRODUCER OBJECT: {kafka_producer} ===")
+                break
+            except Exception as kafka_error:
+                logger.warning(f"=== KAFKA CONNECTION ATTEMPT {attempt + 1}/{max_retries} FAILED ===")
+                logger.warning(f"Error: {kafka_error}")
+                if attempt < max_retries - 1:
+                    logger.info(f"=== RETRYING IN {retry_delay} SECONDS ===")
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error("=== ALL KAFKA CONNECTION ATTEMPTS FAILED ===")
+                    raise kafka_error
+        
+        logger.info("=== ALL CONNECTIONS INITIALIZED ===")
         
     except Exception as e:
-        logger.error(f"Connection initialization failed: {e}")
+        logger.error(f"=== CONNECTION INITIALIZATION FAILED ===")
+        logger.error(f"Error: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        logger.error(f"=== KAFKA PRODUCER STATUS AFTER ERROR: {kafka_producer} ===")
         # Continue without distributed features for demo
 
 def create_job_record(job_id: str, filename: str, file_type: str, total_pages: int, llm_model: str) -> dict:
@@ -208,10 +254,27 @@ def create_job_record(job_id: str, filename: str, file_type: str, total_pages: i
 def publish_page_to_kafka(job_id: str, page_number: int, image_data: str, llm_model: str):
     """Publish page image to Kafka for processing"""
     if not kafka_producer:
-        logger.warning("Kafka producer not available")
+        logger.error("=== KAFKA PRODUCER NOT AVAILABLE ===")
+        logger.error(f"Attempted to publish page {page_number} for job {job_id} but Kafka producer is None")
         return
         
     message = {
+        "job_id": job_id,
+        "page_number": page_number,
+        "image_data": image_data[:100] + "..." if len(image_data) > 100 else image_data,  # Truncate for logging
+        "llm_model": llm_model
+    }
+    
+    logger.info(f"=== SENDING TO KAFKA ===")
+    logger.info(f"Topic: page-processing-topic")
+    logger.info(f"Job ID: {job_id}")
+    logger.info(f"Page: {page_number}")
+    logger.info(f"Model: {llm_model}")
+    logger.info(f"Image data length: {len(image_data)} characters")
+    logger.info(f"Kafka producer status: {kafka_producer is not None}")
+    
+    # Create the actual message (with full image data)
+    full_message = {
         "job_id": job_id,
         "page_number": page_number,
         "image_data": image_data,
@@ -219,16 +282,22 @@ def publish_page_to_kafka(job_id: str, page_number: int, image_data: str, llm_mo
     }
     
     try:
-        kafka_producer.send('page-processing-topic', value=message)
+        future = kafka_producer.send('page-processing-topic', value=full_message)
         kafka_producer.flush()
-        logger.info(f"Published page {page_number} for job {job_id} to Kafka")
+        logger.info(f"=== KAFKA SEND SUCCESS ===")
+        logger.info(f"Successfully published page {page_number} for job {job_id} to Kafka")
+        logger.info(f"Message size: {len(json.dumps(full_message))} bytes")
     except Exception as e:
+        logger.error(f"=== KAFKA SEND FAILED ===")
         logger.error(f"Failed to publish to Kafka: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        logger.error(f"Kafka producer bootstrap servers: {KAFKA_BOOTSTRAP_SERVERS}")
 
 def publish_aggregation_signal(job_id: str, llm_model: str, total_pages: int):
     """Publish aggregation signal to Kafka"""
     if not kafka_producer:
-        logger.warning("Kafka producer not available")
+        logger.error("=== KAFKA PRODUCER NOT AVAILABLE FOR AGGREGATION ===")
+        logger.error(f"Attempted to publish aggregation for job {job_id} but Kafka producer is None")
         return
         
     message = {
@@ -237,12 +306,21 @@ def publish_aggregation_signal(job_id: str, llm_model: str, total_pages: int):
         "total_pages": total_pages
     }
     
+    logger.info(f"=== SENDING AGGREGATION SIGNAL TO KAFKA ===")
+    logger.info(f"Topic: aggregation-trigger-topic")
+    logger.info(f"Job ID: {job_id}")
+    logger.info(f"Model: {llm_model}")
+    logger.info(f"Total Pages: {total_pages}")
+    
     try:
-        kafka_producer.send('aggregation-trigger-topic', value=message)
+        future = kafka_producer.send('aggregation-trigger-topic', value=message)
         kafka_producer.flush()
+        logger.info(f"=== AGGREGATION SIGNAL SENT SUCCESS ===")
         logger.info(f"Published aggregation signal for job {job_id}")
     except Exception as e:
+        logger.error(f"=== AGGREGATION SIGNAL SEND FAILED ===")
         logger.error(f"Failed to publish aggregation signal: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
 
 async def job_completion_monitor():
     """Background task to monitor job completion every 5 seconds"""
@@ -487,29 +565,80 @@ def process_file_for_llm(file_bytes: bytes, filename: str, content_type: str, ll
     """Process file and send pages to distributed LLM processing"""
     job_id = str(uuid.uuid4())
     
+    logger.info(f"=== STARTING LLM PROCESSING ===")
+    logger.info(f"Job ID: {job_id}")
+    logger.info(f"Filename: {filename}")
+    logger.info(f"Content Type: {content_type}")
+    logger.info(f"LLM Model: {llm_model}")
+    logger.info(f"File size: {len(file_bytes)} bytes")
+    
     try:
+        logger.info(f"=== CHECKING CONTENT TYPE: {content_type} ===")
+        print(f"=== CHECKING CONTENT TYPE: {content_type} ===")
+        
         if content_type.startswith("image/"):
             # Single image
+            logger.info(f"=== PROCESSING SINGLE IMAGE: {filename} ===")
+            print(f"=== PROCESSING SINGLE IMAGE: {filename} ===")
             image_data = base64.b64encode(file_bytes).decode('utf-8')
+            logger.info(f"Base64 encoded image length: {len(image_data)} characters")
+            
+            logger.info("=== CREATING JOB RECORD FOR IMAGE ===")
             create_job_record(job_id, filename, "image", 1, llm_model)
+            logger.info("=== PUBLISHING IMAGE TO KAFKA ===")
             publish_page_to_kafka(job_id, 1, image_data, llm_model)
             
         elif content_type == "application/pdf":
             # Multi-page PDF
+            logger.info(f"=== PROCESSING PDF: {filename} ===")
+            print(f"=== PROCESSING PDF: {filename} ===")
+            
+            logger.info("=== CALLING convert_pdf_to_images ===")
+            print("=== CALLING convert_pdf_to_images ===")
             image_bytes_list = convert_pdf_to_images(file_bytes)
             total_pages = len(image_bytes_list)
             
+            logger.info(f"=== PDF CONVERTED TO {total_pages} PAGES ===")
+            print(f"=== PDF CONVERTED TO {total_pages} PAGES ===")
+            
+            logger.info("=== CREATING JOB RECORD FOR PDF ===")
             create_job_record(job_id, filename, "pdf", total_pages, llm_model)
             
             for i, img_bytes in enumerate(image_bytes_list):
-                image_data = base64.b64encode(img_bytes).decode('utf-8')
-                publish_page_to_kafka(job_id, i + 1, image_data, llm_model)
+                logger.info(f"=== PROCESSING PAGE {i + 1}/{total_pages} ===")
+                print(f"=== PROCESSING PAGE {i + 1}/{total_pages} ===")
                 
-        logger.info(f"Started LLM processing job: {job_id}")
+                try:
+                    logger.info(f"=== ENCODING PAGE {i + 1} TO BASE64 ===")
+                    print(f"=== ENCODING PAGE {i + 1} TO BASE64 ===")
+                    image_data = base64.b64encode(img_bytes).decode('utf-8')
+                    logger.info(f"Page {i + 1} base64 length: {len(image_data)} characters")
+                    print(f"Page {i + 1} base64 length: {len(image_data)} characters")
+                    
+                    logger.info(f"=== PUBLISHING PAGE {i + 1} TO KAFKA ===")
+                    print(f"=== PUBLISHING PAGE {i + 1} TO KAFKA ===")
+                    publish_page_to_kafka(job_id, i + 1, image_data, llm_model)
+                    logger.info(f"=== PAGE {i + 1} KAFKA PUBLISH COMPLETED ===")
+                    print(f"=== PAGE {i + 1} KAFKA PUBLISH COMPLETED ===")
+                    
+                except Exception as page_error:
+                    logger.error(f"=== ERROR PROCESSING PAGE {i + 1} ===")
+                    logger.error(f"Error: {page_error}")
+                    logger.error(f"Exception type: {type(page_error).__name__}")
+                    print(f"=== ERROR PROCESSING PAGE {i + 1}: {page_error} ===")
+                    raise page_error
+        else:
+            logger.error(f"=== UNSUPPORTED CONTENT TYPE: {content_type} ===")
+            print(f"=== UNSUPPORTED CONTENT TYPE: {content_type} ===")
+                
+        logger.info(f"=== LLM PROCESSING JOB STARTED ===")
+        logger.info(f"Job ID: {job_id} for file: {filename}")
         return job_id
         
     except Exception as e:
+        logger.error(f"=== LLM PROCESSING FAILED ===")
         logger.error(f"Error processing file for LLM: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
 
 # --- API Endpoints ---
@@ -620,22 +749,44 @@ async def llm_process_file(file: UploadFile = File(...), llm_model: str = Form(.
     """
     Accepts an image or PDF file, processes it with distributed LLM pipeline.
     """
-    logger.info(f"LLM processing requested: {file.filename}, model: {llm_model}")
+    logger.info("=== LLM ENDPOINT CALLED ===")
+    print("=== LLM ENDPOINT CALLED ===")  # Also print to stdout
+    logger.info(f"=== LLM PROCESSING REQUESTED ===")
+    logger.info(f"File: {file.filename}")
+    logger.info(f"Model: {llm_model}")
+    logger.info(f"Content Type: {file.content_type}")
+    print(f"=== LLM processing requested: {file.filename}, model: {llm_model} ===")
     
     # Validate model
-    if llm_model not in ["gemini-2.0-flash", "gemini-2.5-pro"]:
-        raise HTTPException(status_code=400, detail="Invalid LLM model")
+    valid_models = ["gemini-2.0-flash", "gemini-1.5-pro", "gpt-4o", "claude-3-sonnet"]
+    if llm_model not in valid_models:
+        logger.error(f"=== INVALID LLM MODEL ===")
+        logger.error(f"Requested model: {llm_model}")
+        logger.error(f"Valid models: {valid_models}")
+        raise HTTPException(status_code=400, detail=f"Invalid LLM model: {llm_model}. Valid models: {valid_models}")
     
     # Validate file type
     if not file.content_type.startswith("image/") and file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail=f"Invalid file type: {file.content_type}")
     
     try:
+        logger.info("=== READING FILE CONTENTS ===")
+        print("=== READING FILE CONTENTS ===")
         contents = await file.read()
         await file.close()
+        logger.info(f"=== FILE READ COMPLETE - SIZE: {len(contents)} bytes ===")
+        print(f"=== FILE READ COMPLETE - SIZE: {len(contents)} bytes ===")
+        
+        # Check Kafka producer status before processing
+        logger.info(f"=== KAFKA PRODUCER STATUS: {kafka_producer is not None} ===")
+        print(f"=== KAFKA PRODUCER STATUS: {kafka_producer is not None} ===")
         
         # Process file for distributed LLM processing
+        logger.info("=== CALLING process_file_for_llm ===")
+        print("=== CALLING process_file_for_llm ===")
         job_id = process_file_for_llm(contents, file.filename, file.content_type, llm_model)
+        logger.info(f"=== process_file_for_llm RETURNED JOB ID: {job_id} ===")
+        print(f"=== process_file_for_llm RETURNED JOB ID: {job_id} ===")
         
         return LLMProcessResponse(
             success=True,

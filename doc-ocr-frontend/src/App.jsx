@@ -230,6 +230,8 @@ function App() {
   const [isManualSelectionMode, setIsManualSelectionMode] = useState(false);
   const [manualOcrResults, setManualOcrResults] = useState([]);
   const [textItemStates, setTextItemStates] = useState({}); // Store visibility and field names for each text item
+  const [currentJobId, setCurrentJobId] = useState(null); // Track current LLM job ID
+  const [globalLoading, setGlobalLoading] = useState(false); // Global loading state controlled by polling
 
   const handleFileSelect = (file) => {
     setSelectedFile(file);
@@ -240,6 +242,7 @@ function App() {
     setManualOcrResults([]);
     setIsManualSelectionMode(false);
     setTextItemStates({});
+    setCurrentJobId(null); // Reset current job ID when selecting new file
     if (file) {
       // Create a URL for the selected file to display it
       const url = URL.createObjectURL(file);
@@ -447,6 +450,7 @@ function App() {
     };
   }, [fileUrl]);
 
+
   return (
     <div className="App">
       <header className="App-header">
@@ -460,16 +464,22 @@ function App() {
           selectedFile={selectedFile}
         />
 
+
         {/* LLM Processing Component */}
         <LLMProcessor 
           selectedFile={selectedFile}
           loading={loading}
           setLoading={setLoading}
           setError={setError}
+          currentJobId={currentJobId}
+          setCurrentJobId={setCurrentJobId}
+          globalLoading={globalLoading}
+          setGlobalLoading={setGlobalLoading}
         />
 
         {error && <p className="error-message">Error: {error}</p>}
-        {loading && (
+        
+        {globalLoading && (
           <div className="loading-message">
             <p>Processing {fileType === 'pdf' ? 'PDF document' : 'image'}, please wait...</p>
             {fileType === 'pdf' && (
@@ -495,7 +505,7 @@ function App() {
           }}>
             <button 
               onClick={() => setShowOcrResults(!showOcrResults)}
-              disabled={loading}
+              disabled={globalLoading}
               style={{ 
                 display: 'flex',
                 alignItems: 'center',
@@ -505,11 +515,11 @@ function App() {
                 fontWeight: '500',
                 border: 'none',
                 borderRadius: '6px',
-                cursor: loading ? 'not-allowed' : 'pointer',
+                cursor: globalLoading ? 'not-allowed' : 'pointer',
                 transition: 'all 0.2s ease',
                 backgroundColor: showOcrResults ? '#007bff' : '#6c757d',
                 color: 'white',
-                opacity: loading ? 0.6 : 1,
+                opacity: globalLoading ? 0.6 : 1,
                 width: '200px',
                 height: '48px',
                 justifyContent: 'center'
@@ -520,7 +530,7 @@ function App() {
             </button>
             <button 
               onClick={() => setIsManualSelectionMode(!isManualSelectionMode)}
-              disabled={loading}
+              disabled={globalLoading}
               style={{ 
                 display: 'flex',
                 alignItems: 'center',
@@ -574,7 +584,7 @@ function App() {
             </button>
             <button 
               onClick={downloadJsonResults} 
-              disabled={loading || (!ocrResults && manualOcrResults.length === 0)}
+              disabled={globalLoading || (!ocrResults && manualOcrResults.length === 0)}
               style={{ 
                 display: 'flex',
                 alignItems: 'center',
@@ -584,11 +594,11 @@ function App() {
                 fontWeight: '500',
                 border: 'none',
                 borderRadius: '6px',
-                cursor: (loading || (!ocrResults && manualOcrResults.length === 0)) ? 'not-allowed' : 'pointer',
+                cursor: (globalLoading || (!ocrResults && manualOcrResults.length === 0)) ? 'not-allowed' : 'pointer',
                 transition: 'all 0.2s ease',
                 backgroundColor: '#6f42c1',
                 color: 'white',
-                opacity: (loading || (!ocrResults && manualOcrResults.length === 0)) ? 0.6 : 1,
+                opacity: (globalLoading || (!ocrResults && manualOcrResults.length === 0)) ? 0.6 : 1,
                 width: '200px',
                 height: '48px',
                 justifyContent: 'center'
