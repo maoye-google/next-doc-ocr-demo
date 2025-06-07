@@ -181,7 +181,8 @@ def convert_pdf_to_images(file_bytes: bytes) -> List[bytes]:
             page = pdf_document.load_page(page_num)
             # Render page to a pixmap (image)
             # Use lower DPI for faster processing of large PDFs
-            pix = page.get_pixmap(dpi=120)  # Reduced from 150 to 120 for better speed 
+            pix = page.get_pixmap(dpi=300)  # Reduced from 150 to 120 for better speed 
+            # pix = page.get_pixmap(dpi=120)  # Reduced from 150 to 120 for better speed 
             img_bytes = pix.tobytes("png") # Output as PNG bytes
             images.append(img_bytes)
         pdf_document.close()

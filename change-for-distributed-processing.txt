@@ -1,0 +1,289 @@
+# Distributed Processing Implementation Plan for Document OCR/LLM System
+
+## Overview
+This document outlines the comprehensive plan to extend the existing document OCR system with distributed LLM processing capabilities, including Kafka message queues, MongoDB storage, and document history management.
+
+## Current Architecture
+- Frontend: React + Vite application
+- Backend: FastAPI service with PaddleOCR
+- Infrastructure: Docker Compose setup
+
+## Target Architecture
+- Frontend: Enhanced React UI with LLM options and history management
+- doc-ocr-backend: Central orchestrator for file processing and job management
+- doc-ocr-processing: New distributed service for LLM processing
+- Infrastructure: Kafka, Zookeeper, MongoDB, existing services
+
+## Processing Flow
+
+### Phase 1: File Upload & Image Distribution
+1. Frontend uploads file + selects LLM model → doc-ocr-backend
+2. doc-ocr-backend splits document into page images → publishes to Kafka
+3. doc-ocr-backend creates job record in MongoDB with status "processing"
+
+### Phase 2: Individual Page Processing
+4. doc-ocr-processing consumes images from Kafka → processes via Vertex AI
+5. doc-ocr-processing stores individual page results in MongoDB
+
+### Phase 3: Job Completion Detection & Aggregation Trigger
+6. doc-ocr-backend polls MongoDB every 5 seconds to check job completion status
+7. doc-ocr-backend when all pages processed → publishes "aggregation signal" to Kafka
+
+### Phase 4: Document Aggregation
+8. doc-ocr-processing consumes aggregation signal from Kafka
+9. doc-ocr-processing retrieves all page results from MongoDB
+10. doc-ocr-processing calls Vertex AI for summary + markdown generation
+11. doc-ocr-processing stores final results in MongoDB
+
+### Phase 5: Results Display
+12. Frontend polls doc-ocr-backend every 5 seconds for job status
+13. doc-ocr-backend queries MongoDB → returns status to frontend
+14. Frontend displays results when complete
+
+## Kafka Topics
+
+### page-processing-topic
+Purpose: Individual page images for processing
+Message Format:
+```json
+{
+  "job_id": "uuid",
+  "page_number": 1,
+  "image_data": "base64_encoded_image",
+  "llm_model": "gemini-2.0-flash"
+}
+```
+
+### aggregation-trigger-topic  
+Purpose: Job completion signals for document aggregation
+Message Format:
+```json
+{
+  "job_id": "uuid",
+  "llm_model": "gemini-2.0-flash",
+  "total_pages": 5
+}
+```
+
+## MongoDB Schemas
+
+### jobs_collection
+```json
+{
+  "job_id": "uuid",
+  "file_name": "invoice.pdf",
+  "file_type": "pdf",
+  "total_pages": 5,
+  "processed_pages": 3,
+  "llm_model": "gemini-2.0-flash",
+  "processing_type": "llm",
+  "status": "processing",
+  "created_at": "2024-01-15T14:30:00Z",
+  "updated_at": "2024-01-15T14:32:00Z",
+  "completed_at": null,
+  "analysis_duration_seconds": null
+}
+```
+
+### page_results_collection
+```json
+{
+  "job_id": "uuid",
+  "page_number": 1,
+  "extracted_text": "Invoice content...",
+  "confidence_score": 0.95,
+  "status": "completed",
+  "created_at": "2024-01-15T14:31:00Z"
+}
+```
+
+### final_results_collection
+```json
+{
+  "job_id": "uuid",
+  "document_overview": "This is an invoice for...",
+  "markdown_content": "# Invoice Analysis\n\n## Page 1\n...",
+  "status": "completed",
+  "created_at": "2024-01-15T14:35:00Z"
+}
+```
+
+## Component Responsibilities
+
+### doc-ocr-backend (Enhanced)
+- File upload handling
+- Document splitting into page images
+- Kafka producer for page images
+- MongoDB job tracking and status monitoring
+- Job completion detection via MongoDB polling (5-second intervals)
+- Aggregation signal publishing to Kafka
+- Frontend API endpoints for status queries
+- Document history API endpoints
+- Bulk deletion API endpoint
+
+### doc-ocr-processing (New Service)
+- Kafka consumer for page images
+- Individual page Vertex AI processing
+- Page results storage in MongoDB
+- Kafka consumer for aggregation signals
+- Final document aggregation (summary + markdown)
+- Final results storage in MongoDB
+
+### Frontend (Enhanced)
+- Updated UI with OCR/LLM processing options
+- LLM model dropdown (Gemini-2.0-Flash, Gemini-2.5-Pro)
+- Status polling for job completion
+- Results display component
+- Document history table with analysis time
+- Download functionality for markdown results
+- Delete All functionality
+
+## UI Layout Structure
+
+```
+┌─────────────────────────────────────────┐
+│  OnPrem Document AI Demo                │
+├─────────────────────────────────────────┤
+│  [File Upload Section]                  │
+│  [OCR Button] [LLM Button] [Model ▼]    │
+├─────────────────────────────────────────┤
+│  [Current Document Results Display]     │
+│  • AI Overview                          │
+│  • Markdown Content                     │
+│  • Download Button                      │
+├─────────────────────────────────────────┤
+│  📋 Analysis History        [Delete All]│
+│  ┌─────────────────────────────────────┐ │
+│  │ Document  │Started │Type│Pages│Status│ │
+│  │ Name      │At      │    │     │&Time │ │
+│  ├─────────────────────────────────────┤ │
+│  │📄invoice  │Jan 15  │PDF │ 5   │✅ 2m34s│ │
+│  │.pdf       │2:30 PM │    │     │LLM   │ │
+│  ├─────────────────────────────────────┤ │
+│  │📄contract │Jan 15  │Img │ 1   │🔄 --  │ │
+│  │.png       │1:15 PM │    │     │OCR   │ │
+│  └─────────────────────────────────────┘ │
+└─────────────────────────────────────────┘
+```
+
+## API Endpoints
+
+### New Endpoints (doc-ocr-backend)
+- `POST /api/llm/process/` - LLM processing initiation
+- `GET /api/documents/history` - Document history retrieval
+- `GET /api/documents/{job_id}/results` - Specific document results
+- `GET /api/documents/{job_id}/status` - Job status polling
+- `DELETE /api/documents/all` - Bulk deletion
+
+### Enhanced Endpoints
+- `POST /api/ocr/process/` - Enhanced with job tracking
+
+## Docker Services
+
+### docker-compose.yml additions
+```yaml
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+
+  doc-ocr-processing:
+    build: ./doc-ocr-processing
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MONGODB_URL: mongodb://mongodb:27017
+      VERTEX_AI_PROJECT_ID: ${GCP_PROJECT_ID}
+```
+
+## Vertex AI Integration
+
+### Model Endpoints
+```javascript
+const modelEndpoints = {
+  'gemini-2.0-flash': 'projects/{PROJECT_ID}/locations/{LOCATION}/publishers/google/models/gemini-2.0-flash-exp',
+  'gemini-2.5-pro': 'projects/{PROJECT_ID}/locations/{LOCATION}/publishers/google/models/gemini-2.5-pro'
+};
+```
+
+### Processing Types
+1. Individual Page Processing: Image → Text extraction
+2. Document Aggregation: All page texts → Summary + Markdown formatting
+
+## Implementation Timeline
+
+### Phase 1: Infrastructure Setup
+- MongoDB, Kafka, Zookeeper services
+- Basic doc-ocr-processing service
+- Enhanced doc-ocr-backend with MongoDB
+
+### Phase 2: Core Processing
+- Kafka producers/consumers
+- Vertex AI integration
+- Job tracking and completion detection
+
+### Phase 3: Frontend Enhancement
+- LLM processing UI
+- History management
+- Results display
+
+### Phase 4: Advanced Features
+- Analysis time tracking
+- Download functionality
+- Bulk operations
+
+## Key Benefits
+- Distributed processing for scalability
+- Persistent job tracking and history
+- Multiple AI model options
+- Comprehensive results management
+- Performance analytics
+- User-friendly interface
+
+## Technical Considerations
+- Error handling across distributed components
+- Message queue reliability and ordering
+- Database consistency and transactions
+- Frontend polling optimization (5-second intervals)
+- Resource management for large documents
+- Security for GCP credentials and API access
+
+## Demo Implementation Details (MISSING - NEEDS IMPLEMENTATION)
+
+### Critical Missing Components
+1. **GCP Vertex AI Integration Code**
+   - Vertex AI client setup with authentication
+   - Prompt templates for page processing and document aggregation
+   - Model endpoint configuration
+
+2. **MongoDB Connection Setup**
+   - Database client initialization
+   - Collection schemas and indexing
+   - Connection string configuration
+
+3. **Environment Configuration**
+   - `.env` files with GCP project settings
+   - Kafka connection parameters
+   - MongoDB connection strings
+
+4. **Basic Error Handling**
+   - Vertex AI service unavailable fallbacks
+   - Simple user-friendly error messages
+   - Kafka connection retry logic
+
+### Implementation Priorities
+1. **Phase 1**: Infrastructure setup (MongoDB, Kafka containers)
+2. **Phase 2**: Basic Vertex AI integration
+3. **Phase 3**: Job tracking with 5-second polling
+4. **Phase 4**: Frontend integration and status updates
