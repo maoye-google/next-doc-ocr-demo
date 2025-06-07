@@ -127,6 +127,33 @@ class DocumentHistory(BaseModel):
 
 # --- Database and Messaging Functions ---
 
+def init_database_schema():
+    """Initialize database collections and indexes"""
+    if mongo_db is None:
+        logger.warning("MongoDB not available for schema initialization")
+        return
+    
+    try:
+        # Create indexes for better performance
+        logger.info("Initializing database schema...")
+        
+        # Jobs collection indexes
+        mongo_db.jobs.create_index("job_id", unique=True)
+        mongo_db.jobs.create_index("status")
+        mongo_db.jobs.create_index("created_at")
+        
+        # Page results collection indexes
+        mongo_db.page_results.create_index([("job_id", 1), ("page_number", 1)], unique=True)
+        mongo_db.page_results.create_index("job_id")
+        
+        # Final results collection indexes
+        mongo_db.final_results.create_index("job_id", unique=True)
+        
+        logger.info("Database schema initialized successfully")
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize database schema: {e}")
+
 def init_connections():
     """Initialize database and message queue connections"""
     global kafka_producer, mongo_client, mongo_db
@@ -140,6 +167,9 @@ def init_connections():
         # Test MongoDB connection
         mongo_client.admin.command('ping')
         logger.info("MongoDB connection successful")
+        
+        # Initialize database schema
+        init_database_schema()
         
         # Initialize Kafka Producer
         kafka_producer = KafkaProducer(
@@ -169,7 +199,7 @@ def create_job_record(job_id: str, filename: str, file_type: str, total_pages: i
         "analysis_duration_seconds": None
     }
     
-    if mongo_db:
+    if mongo_db is not None:
         mongo_db.jobs.insert_one(job_record)
         logger.info(f"Created job record: {job_id}")
     
@@ -220,7 +250,7 @@ async def job_completion_monitor():
         try:
             await asyncio.sleep(5)  # 5-second polling interval
             
-            if not mongo_db:
+            if mongo_db is None:
                 continue
                 
             # Find jobs that are processing
@@ -628,7 +658,7 @@ async def get_job_status(job_id: str):
     """
     Get the current status of a processing job.
     """
-    if not mongo_db:
+    if mongo_db is None:
         raise HTTPException(status_code=503, detail="Database not available")
     
     try:
@@ -671,7 +701,7 @@ async def get_document_history():
     """
     Get the history of all processed documents.
     """
-    if not mongo_db:
+    if mongo_db is None:
         raise HTTPException(status_code=503, detail="Database not available")
     
     try:
@@ -713,7 +743,7 @@ async def delete_all_documents():
     """
     Delete all document processing records and results.
     """
-    if not mongo_db:
+    if mongo_db is None:
         raise HTTPException(status_code=503, detail="Database not available")
     
     try:
@@ -734,7 +764,7 @@ async def get_document_results(job_id: str):
     """
     Get the complete results for a specific document.
     """
-    if not mongo_db:
+    if mongo_db is None:
         raise HTTPException(status_code=503, detail="Database not available")
     
     try:
