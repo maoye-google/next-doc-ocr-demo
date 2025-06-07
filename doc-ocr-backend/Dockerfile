@@ -27,10 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements.txt and install Python dependencies
 COPY requirements.txt requirements.txt
 
-# Install numpy first to avoid ABI conflicts
-RUN pip install --no-cache-dir numpy==1.21.6
-
-# Install remaining dependencies
+# Install dependencies in specific order to avoid conflicts
+RUN pip install --no-cache-dir numpy==1.21.6 opencv-python==4.5.5.64
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code

@@ -10,10 +10,26 @@ from paddleocr import PaddleOCR
 from typing import List, Tuple, Any, Optional
 import logging
 import base64
+import json
+import uuid
+from datetime import datetime
+import asyncio
+from pymongo import MongoClient
+from kafka import KafkaProducer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Environment variables
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/ocr_demo")
+
+# Global variables for connections
+kafka_producer = None
+mongo_client = None
+mongo_db = None
+job_polling_task = None
 
 # Initialize PaddleOCR
 # This should be done once globally.
@@ -33,7 +49,25 @@ except Exception as e:
     print(f"=== PaddleOCR initialization failed: {e} ===")
     ocr_instance = None
 
-app = FastAPI(title="OCR Backend Service", version="1.0.0")
+app = FastAPI(title="OCR Backend Service", version="2.0.0")
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize connections and start background tasks on startup"""
+    global job_polling_task
+    init_connections()
+    # Start job completion monitoring
+    job_polling_task = asyncio.create_task(job_completion_monitor())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up connections on shutdown"""
+    if job_polling_task:
+        job_polling_task.cancel()
+    if kafka_producer:
+        kafka_producer.close()
+    if mongo_client:
+        mongo_client.close()
 
 # CORS Configuration
 # Adjust origins as needed for your frontend.
@@ -72,6 +106,149 @@ class ManualOCRResponse(BaseModel):
     success: bool = Field(..., description="Boolean indicating success")
     message: str = Field(..., description="Status or error message")
     detections: Optional[List[OCRDetection]] = Field(None, description="OCR results for the selected area")
+
+class LLMProcessRequest(BaseModel):
+    llm_model: str = Field(..., description="LLM model to use (gemini-2.0-flash, gemini-2.5-pro)")
+
+class LLMProcessResponse(BaseModel):
+    success: bool = Field(..., description="Boolean indicating success")
+    message: str = Field(..., description="Status message")
+    job_id: Optional[str] = Field(None, description="Job ID for tracking")
+
+class JobStatus(BaseModel):
+    job_id: str
+    status: str
+    progress: dict
+    results: Optional[dict] = None
+
+class DocumentHistory(BaseModel):
+    documents: List[dict]
+    total: int
+
+# --- Database and Messaging Functions ---
+
+def init_connections():
+    """Initialize database and message queue connections"""
+    global kafka_producer, mongo_client, mongo_db
+    
+    try:
+        # Initialize MongoDB
+        logger.info(f"Connecting to MongoDB: {MONGODB_URL}")
+        mongo_client = MongoClient(MONGODB_URL)
+        mongo_db = mongo_client.get_default_database()
+        
+        # Test MongoDB connection
+        mongo_client.admin.command('ping')
+        logger.info("MongoDB connection successful")
+        
+        # Initialize Kafka Producer
+        kafka_producer = KafkaProducer(
+            bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+            value_serializer=lambda v: json.dumps(v).encode('utf-8')
+        )
+        logger.info("Kafka producer initialized")
+        
+    except Exception as e:
+        logger.error(f"Connection initialization failed: {e}")
+        # Continue without distributed features for demo
+
+def create_job_record(job_id: str, filename: str, file_type: str, total_pages: int, llm_model: str) -> dict:
+    """Create a new job record in MongoDB"""
+    job_record = {
+        "job_id": job_id,
+        "file_name": filename,
+        "file_type": file_type,
+        "total_pages": total_pages,
+        "processed_pages": 0,
+        "llm_model": llm_model,
+        "processing_type": "llm",
+        "status": "processing",
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+        "completed_at": None,
+        "analysis_duration_seconds": None
+    }
+    
+    if mongo_db:
+        mongo_db.jobs.insert_one(job_record)
+        logger.info(f"Created job record: {job_id}")
+    
+    return job_record
+
+def publish_page_to_kafka(job_id: str, page_number: int, image_data: str, llm_model: str):
+    """Publish page image to Kafka for processing"""
+    if not kafka_producer:
+        logger.warning("Kafka producer not available")
+        return
+        
+    message = {
+        "job_id": job_id,
+        "page_number": page_number,
+        "image_data": image_data,
+        "llm_model": llm_model
+    }
+    
+    try:
+        kafka_producer.send('page-processing-topic', value=message)
+        kafka_producer.flush()
+        logger.info(f"Published page {page_number} for job {job_id} to Kafka")
+    except Exception as e:
+        logger.error(f"Failed to publish to Kafka: {e}")
+
+def publish_aggregation_signal(job_id: str, llm_model: str, total_pages: int):
+    """Publish aggregation signal to Kafka"""
+    if not kafka_producer:
+        logger.warning("Kafka producer not available")
+        return
+        
+    message = {
+        "job_id": job_id,
+        "llm_model": llm_model,
+        "total_pages": total_pages
+    }
+    
+    try:
+        kafka_producer.send('aggregation-trigger-topic', value=message)
+        kafka_producer.flush()
+        logger.info(f"Published aggregation signal for job {job_id}")
+    except Exception as e:
+        logger.error(f"Failed to publish aggregation signal: {e}")
+
+async def job_completion_monitor():
+    """Background task to monitor job completion every 5 seconds"""
+    while True:
+        try:
+            await asyncio.sleep(5)  # 5-second polling interval
+            
+            if not mongo_db:
+                continue
+                
+            # Find jobs that are processing
+            processing_jobs = mongo_db.jobs.find({"status": "processing"})
+            
+            for job in processing_jobs:
+                job_id = job["job_id"]
+                total_pages = job["total_pages"]
+                
+                # Count completed pages
+                completed_pages = mongo_db.page_results.count_documents({
+                    "job_id": job_id,
+                    "status": "completed"
+                })
+                
+                # Update progress
+                mongo_db.jobs.update_one(
+                    {"job_id": job_id},
+                    {"$set": {"processed_pages": completed_pages, "updated_at": datetime.utcnow()}}
+                )
+                
+                # Check if all pages are completed
+                if completed_pages >= total_pages:
+                    logger.info(f"Job {job_id} ready for aggregation")
+                    publish_aggregation_signal(job_id, job["llm_model"], total_pages)
+                    
+        except Exception as e:
+            logger.error(f"Error in job completion monitor: {e}")
 
 # --- Helper Functions ---
 
@@ -274,6 +451,37 @@ def process_cropped_area_with_ocr(image_bytes: bytes, coordinates: dict) -> List
         logger.error(f"Error during manual OCR processing: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Manual OCR processing failed: {str(e)}")
 
+# --- Enhanced OCR Processing for LLM ---
+
+def process_file_for_llm(file_bytes: bytes, filename: str, content_type: str, llm_model: str) -> str:
+    """Process file and send pages to distributed LLM processing"""
+    job_id = str(uuid.uuid4())
+    
+    try:
+        if content_type.startswith("image/"):
+            # Single image
+            image_data = base64.b64encode(file_bytes).decode('utf-8')
+            create_job_record(job_id, filename, "image", 1, llm_model)
+            publish_page_to_kafka(job_id, 1, image_data, llm_model)
+            
+        elif content_type == "application/pdf":
+            # Multi-page PDF
+            image_bytes_list = convert_pdf_to_images(file_bytes)
+            total_pages = len(image_bytes_list)
+            
+            create_job_record(job_id, filename, "pdf", total_pages, llm_model)
+            
+            for i, img_bytes in enumerate(image_bytes_list):
+                image_data = base64.b64encode(img_bytes).decode('utf-8')
+                publish_page_to_kafka(job_id, i + 1, image_data, llm_model)
+                
+        logger.info(f"Started LLM processing job: {job_id}")
+        return job_id
+        
+    except Exception as e:
+        logger.error(f"Error processing file for LLM: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+
 # --- API Endpoints ---
 
 @app.get("/", summary="Root endpoint", response_model=dict)
@@ -377,9 +585,203 @@ async def ocr_manual_area(request: ManualOCRRequest):
         logger.error(f"An unexpected error occurred during manual OCR: {e}", exc_info=True)
         return ManualOCRResponse(success=False, message=f"An unexpected error occurred: {str(e)}", detections=None)
 
+@app.post("/api/llm/process/", summary="Process an uploaded file with LLM", response_model=LLMProcessResponse)
+async def llm_process_file(file: UploadFile = File(...), llm_model: str = Form(...)):
+    """
+    Accepts an image or PDF file, processes it with distributed LLM pipeline.
+    """
+    logger.info(f"LLM processing requested: {file.filename}, model: {llm_model}")
+    
+    # Validate model
+    if llm_model not in ["gemini-2.0-flash", "gemini-2.5-pro"]:
+        raise HTTPException(status_code=400, detail="Invalid LLM model")
+    
+    # Validate file type
+    if not file.content_type.startswith("image/") and file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail=f"Invalid file type: {file.content_type}")
+    
+    try:
+        contents = await file.read()
+        await file.close()
+        
+        # Process file for distributed LLM processing
+        job_id = process_file_for_llm(contents, file.filename, file.content_type, llm_model)
+        
+        return LLMProcessResponse(
+            success=True,
+            message="LLM processing started",
+            job_id=job_id
+        )
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error in LLM processing: {e}")
+        return LLMProcessResponse(
+            success=False,
+            message=f"Processing failed: {str(e)}",
+            job_id=None
+        )
+
+@app.get("/api/documents/{job_id}/status", summary="Get job status", response_model=JobStatus)
+async def get_job_status(job_id: str):
+    """
+    Get the current status of a processing job.
+    """
+    if not mongo_db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        # Get job record
+        job = mongo_db.jobs.find_one({"job_id": job_id})
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        progress = {
+            "total_pages": job["total_pages"],
+            "processed_pages": job["processed_pages"],
+            "percentage": (job["processed_pages"] / job["total_pages"]) * 100 if job["total_pages"] > 0 else 0
+        }
+        
+        results = None
+        if job["status"] == "completed":
+            # Get final results
+            final_result = mongo_db.final_results.find_one({"job_id": job_id})
+            if final_result:
+                results = {
+                    "document_overview": final_result.get("document_overview"),
+                    "markdown_content": final_result.get("markdown_content")
+                }
+        
+        return JobStatus(
+            job_id=job_id,
+            status=job["status"],
+            progress=progress,
+            results=results
+        )
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error getting job status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get job status")
+
+@app.get("/api/documents/history", summary="Get document processing history", response_model=DocumentHistory)
+async def get_document_history():
+    """
+    Get the history of all processed documents.
+    """
+    if not mongo_db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        # Get all jobs, sorted by creation time (newest first)
+        jobs = list(mongo_db.jobs.find().sort("created_at", -1))
+        
+        documents = []
+        for job in jobs:
+            # Calculate duration if completed
+            duration_seconds = None
+            if job.get("completed_at") and job.get("created_at"):
+                duration = job["completed_at"] - job["created_at"]
+                duration_seconds = int(duration.total_seconds())
+            
+            documents.append({
+                "job_id": job["job_id"],
+                "file_name": job["file_name"],
+                "file_type": job["file_type"],
+                "total_pages": job["total_pages"],
+                "processing_type": job["processing_type"],
+                "llm_model": job.get("llm_model"),
+                "status": job["status"],
+                "created_at": job["created_at"].isoformat(),
+                "completed_at": job["completed_at"].isoformat() if job.get("completed_at") else None,
+                "duration_seconds": duration_seconds
+            })
+        
+        return DocumentHistory(
+            documents=documents,
+            total=len(documents)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting document history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get document history")
+
+@app.delete("/api/documents/all", summary="Delete all documents")
+async def delete_all_documents():
+    """
+    Delete all document processing records and results.
+    """
+    if not mongo_db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        # Delete all collections
+        mongo_db.jobs.delete_many({})
+        mongo_db.page_results.delete_many({})
+        mongo_db.final_results.delete_many({})
+        
+        logger.info("Deleted all document records")
+        return {"message": "All documents deleted successfully"}
+        
+    except Exception as e:
+        logger.error(f"Error deleting documents: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete documents")
+
+@app.get("/api/documents/{job_id}/results", summary="Get specific document results")
+async def get_document_results(job_id: str):
+    """
+    Get the complete results for a specific document.
+    """
+    if not mongo_db:
+        raise HTTPException(status_code=503, detail="Database not available")
+    
+    try:
+        # Get job record
+        job = mongo_db.jobs.find_one({"job_id": job_id})
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        if job["status"] != "completed":
+            raise HTTPException(status_code=400, detail="Job not completed yet")
+        
+        # Get final results
+        final_result = mongo_db.final_results.find_one({"job_id": job_id})
+        if not final_result:
+            raise HTTPException(status_code=404, detail="Results not found")
+        
+        # Get page results
+        page_results = list(mongo_db.page_results.find({"job_id": job_id}).sort("page_number", 1))
+        
+        return {
+            "job_id": job_id,
+            "document_overview": final_result.get("document_overview"),
+            "markdown_content": final_result.get("markdown_content"),
+            "page_results": [{
+                "page_number": page["page_number"],
+                "extracted_text": page["extracted_text"],
+                "confidence_score": page["confidence_score"]
+            } for page in page_results],
+            "processing_info": {
+                "model": job["llm_model"],
+                "total_pages": job["total_pages"],
+                "created_at": job["created_at"].isoformat(),
+                "completed_at": job["completed_at"].isoformat() if job.get("completed_at") else None
+            }
+        }
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Error getting document results: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get document results")
+
 if __name__ == "__main__":
     # This part is for local development testing (not used by Uvicorn in Docker)
     import uvicorn
     logger.info("Starting Uvicorn server for local development on http://localhost:8000")
     # Note: PaddleOCR model download might happen on first run here.
+    # Initialize connections before starting
+    init_connections()
     uvicorn.run(app, host="0.0.0.0", port=8000)
