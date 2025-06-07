@@ -1,8 +1,9 @@
 // frontend/src/App.jsx
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import axios from 'axios';
 import FileUploader from './components/FileUploader';
 import DocumentViewer from './components/DocumentViewer';
+import LLMProcessor from './components/LLMProcessor';
 import './App.css'; // Specific styles for App component
 
 // Draggable Text Dialog Component
@@ -229,15 +230,6 @@ function App() {
   const [isManualSelectionMode, setIsManualSelectionMode] = useState(false);
   const [manualOcrResults, setManualOcrResults] = useState([]);
   const [textItemStates, setTextItemStates] = useState({}); // Store visibility and field names for each text item
-  
-  // New LLM processing states
-  const [llmModel, setLlmModel] = useState('gemini-2.0-flash');
-  const [currentJobId, setCurrentJobId] = useState(null);
-  const [jobStatus, setJobStatus] = useState(null);
-  const [llmResults, setLlmResults] = useState(null);
-  const [documentHistory, setDocumentHistory] = useState([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [pollingInterval, setPollingInterval] = useState(null);
 
   const handleFileSelect = (file) => {
     setSelectedFile(file);
@@ -248,15 +240,6 @@ function App() {
     setManualOcrResults([]);
     setIsManualSelectionMode(false);
     setTextItemStates({});
-    
-    // Reset LLM states
-    setCurrentJobId(null);
-    setJobStatus(null);
-    setLlmResults(null);
-    if (pollingInterval) {
-      clearInterval(pollingInterval);
-      setPollingInterval(null);
-    }
     if (file) {
       // Create a URL for the selected file to display it
       const url = URL.createObjectURL(file);
@@ -321,131 +304,6 @@ function App() {
     setLoading(false);
   };
 
-  // LLM Processing Functions
-  const handleLlmUpload = async () => {
-    if (!selectedFile) {
-      setError('Please select a file first.');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-    setLlmResults(null);
-    setJobStatus(null);
-
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-    formData.append('llm_model', llmModel);
-
-    try {
-      const response = await axios.post('api/llm/process/', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        timeout: 30000,
-      });
-
-      if (response.data.success && response.data.job_id) {
-        setCurrentJobId(response.data.job_id);
-        startPolling(response.data.job_id);
-      } else {
-        setError(response.data.message || 'LLM processing failed to start.');
-        setLoading(false);
-      }
-    } catch (err) {
-      console.error('LLM Upload Error:', err);
-      let errorMsg = 'LLM processing failed to start.';
-      if (err.response) {
-        errorMsg = err.response.data.detail || err.response.data.message || `Server error: ${err.response.status}`;
-      } else if (err.request) {
-        errorMsg = 'No response from server. Check network or backend status.';
-      }
-      setError(errorMsg);
-      setLoading(false);
-    }
-  };
-
-  const startPolling = (jobId) => {
-    const interval = setInterval(async () => {
-      try {
-        const response = await axios.get(`api/documents/${jobId}/status`);
-        setJobStatus(response.data);
-        
-        if (response.data.status === 'completed') {
-          setLlmResults(response.data.results);
-          setLoading(false);
-          clearInterval(interval);
-          setPollingInterval(null);
-          loadDocumentHistory(); // Refresh history
-        } else if (response.data.status === 'error') {
-          setError('LLM processing failed.');
-          setLoading(false);
-          clearInterval(interval);
-          setPollingInterval(null);
-        }
-      } catch (err) {
-        console.error('Polling error:', err);
-        // Continue polling on error
-      }
-    }, 5000); // Poll every 5 seconds
-    
-    setPollingInterval(interval);
-  };
-
-  const loadDocumentHistory = async () => {
-    try {
-      const response = await axios.get('api/documents/history');
-      setDocumentHistory(response.data.documents || []);
-    } catch (err) {
-      console.error('Error loading document history:', err);
-    }
-  };
-
-  const deleteAllDocuments = async () => {
-    if (!window.confirm('Are you sure you want to delete all document history?')) {
-      return;
-    }
-    
-    try {
-      await axios.delete('api/documents/all');
-      setDocumentHistory([]);
-      setShowHistory(false);
-    } catch (err) {
-      console.error('Error deleting documents:', err);
-      setError('Failed to delete documents.');
-    }
-  };
-
-  const downloadMarkdown = () => {
-    if (!llmResults || !llmResults.markdown_content) {
-      setError('No markdown content to download.');
-      return;
-    }
-    
-    const blob = new Blob([llmResults.markdown_content], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${selectedFile.name}_analysis.md`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  // Load document history on component mount
-  React.useEffect(() => {
-    loadDocumentHistory();
-  }, []);
-
-  // Cleanup polling on unmount
-  React.useEffect(() => {
-    return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-      }
-    };
-  }, [pollingInterval]);
 
   const handleTextItemToggle = (globalIndex) => {
     setTextItemStates(prev => ({
@@ -600,6 +458,14 @@ function App() {
           onUpload={handleUpload} 
           loading={loading} 
           selectedFile={selectedFile}
+        />
+
+        {/* LLM Processing Component */}
+        <LLMProcessor 
+          selectedFile={selectedFile}
+          loading={loading}
+          setLoading={setLoading}
+          setError={setError}
         />
 
         {error && <p className="error-message">Error: {error}</p>}

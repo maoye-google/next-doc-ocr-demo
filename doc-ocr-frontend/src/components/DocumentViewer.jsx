@@ -377,14 +377,22 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
                 // Only show if both conditions are met: should show AND item is visible
                 if (shouldShowBox && isTextItemVisible(globalIndex)) {
                   const isJapaneseText = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text);
+                  
+                  // Debug logging for coordinate analysis
+                  console.log(`Detection: "${detection.text}", Japanese: ${isJapaneseText}, Box:`, detection.box, `Scale: ${imageScale}, Canvas: ${canvasRef.width}x${canvasRef.height}`);
+                  
                   if (isJapaneseText) {
-                    // Adjust the box coordinates for Japanese text by adding a fixed offset to the height
-                    // const adjustedBox = detection.box.map(point => [point[0]*1.01, point[1]*1.005+65]);
+                    // Adjust the box coordinates for Japanese text
                     const adjustedBox = detection.box.map(point => [point[0]*1.07, point[1]*1.065]);
                     drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
                   } else {
-                    const adjustedBox = detection.box.map(point => [point[0]*1.07, point[1]*1.065]);
-                    drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
+                    // For English text, use much smaller scaling to bring coordinates into visible range
+                    // The coordinates from OCR seem to be in a much larger coordinate space
+                    const reducedScale = imageScale * 0.40; // Much more aggressive reduction
+                    
+                    console.log(`English text "${detection.text}" - using reduced scale ${reducedScale}`);
+                    
+                    drawBoundingBox(ctx, detection.box, detection.text, detection.score, reducedScale, isHighlighted);
                   }
                 }
               });
@@ -473,8 +481,14 @@ function DocumentViewer({ fileUrl, fileType, ocrResults, showOcrResults = true, 
               // Only show if both conditions are met: should show AND item is visible
               if (shouldShowBox && isTextItemVisible(globalIndex)) {
                 const isJapaneseText = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/.test(detection.text);
-                const adjustedBox = detection.box.map(point => [point[0]*1.07, point[1]*1.065]);
-                drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
+                if (isJapaneseText) {
+                  const adjustedBox = detection.box.map(point => [point[0]*1.07, point[1]*1.065]);
+                  drawBoundingBox(ctx, adjustedBox, detection.text, detection.score, imageScale, isHighlighted);
+                } else {
+                  // For English text, use much smaller scaling to bring coordinates into visible range
+                  const reducedScale = imageScale * 0.3;
+                  drawBoundingBox(ctx, detection.box, detection.text, detection.score, reducedScale, isHighlighted);
+                }
               }
             });
           }
