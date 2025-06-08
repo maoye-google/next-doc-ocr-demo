@@ -13,6 +13,13 @@ spec:
   - host: doc-ocr.maoye.demo.altostrat.com
     http:
       paths:
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: doc-ocr-backend
+            port:
+              number: 8000
       - path: /api/*
         pathType: ImplementationSpecific
         backend:
@@ -26,4 +33,4 @@ spec:
           service:
             name: doc-ocr-frontend
             port:
-              number: 5173
+              number: 80

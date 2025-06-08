@@ -90,7 +90,7 @@ services:
     networks:
       - ocr_network
     depends_on:
-      kafka:
+      local-kafka:
         condition: service_healthy
       mongodb:
         condition: service_started

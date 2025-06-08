@@ -689,6 +689,45 @@ async def read_root():
     """Returns a welcome message for the OCR backend service."""
     return {"message": "OCR Backend Service is running"}
 
+@app.get("/health", summary="Health check endpoint", response_model=dict)
+async def health_check():
+    """Returns the health status of the OCR backend service."""
+    try:
+        # Check if OCR instance is available
+        ocr_status = "healthy" if ocr_instance is not None else "unhealthy"
+        
+        # Check database connection if available
+        db_status = "healthy"
+        if mongo_client is not None:
+            try:
+                mongo_client.admin.command('ping')
+            except Exception:
+                db_status = "unhealthy"
+        else:
+            db_status = "unavailable"
+        
+        # Check Kafka connection if available
+        kafka_status = "healthy" if kafka_producer is not None else "unavailable"
+        
+        overall_status = "healthy" if ocr_status == "healthy" else "unhealthy"
+        
+        return {
+            "status": overall_status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "services": {
+                "ocr": ocr_status,
+                "database": db_status,
+                "kafka": kafka_status
+            }
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e)
+        }
+
 @app.post("/api/ocr/process/", summary="Process an uploaded file (image or PDF) for OCR", response_model=OCRResponse)
 async def ocr_process_file(file: UploadFile = File(...)):
     """
