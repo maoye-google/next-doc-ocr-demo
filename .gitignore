@@ -28,6 +28,7 @@ doc-ocr-frontend/build/*
 
 # Credentials
 credentials/**
+**/credentials/**
 
 # Environment Setting
 **/.env

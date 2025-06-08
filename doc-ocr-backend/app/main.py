@@ -757,13 +757,7 @@ async def llm_process_file(file: UploadFile = File(...), llm_model: str = Form(.
     logger.info(f"Content Type: {file.content_type}")
     print(f"=== LLM processing requested: {file.filename}, model: {llm_model} ===")
     
-    # Validate model
-    valid_models = ["gemini-2.0-flash", "gemini-1.5-pro", "gpt-4o", "claude-3-sonnet"]
-    if llm_model not in valid_models:
-        logger.error(f"=== INVALID LLM MODEL ===")
-        logger.error(f"Requested model: {llm_model}")
-        logger.error(f"Valid models: {valid_models}")
-        raise HTTPException(status_code=400, detail=f"Invalid LLM model: {llm_model}. Valid models: {valid_models}")
+    # Pass model name directly to processing service without validation
     
     # Validate file type
     if not file.content_type.startswith("image/") and file.content_type != "application/pdf":

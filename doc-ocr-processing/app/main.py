@@ -13,6 +13,8 @@ from kafka import KafkaConsumer, KafkaProducer
 from kafka.admin import KafkaAdminClient, NewTopic
 from pymongo import MongoClient
 from google.cloud import aiplatform
+from vertexai.generative_models import GenerativeModel, Part, FinishReason
+import vertexai.preview.generative_models as generative_models
 import google.auth
 
 # Configure logging
@@ -24,6 +26,7 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/ocr_demo")
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "demo-project")
 GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
 # Initialize FastAPI
 app = FastAPI(title="OCR Processing Service", version="1.0.0")
@@ -33,6 +36,13 @@ kafka_consumer = None
 kafka_producer = None
 mongo_client = None
 mongo_db = None
+
+model_endpoints = {
+    # Map user-friendly names to actual Vertex AI model IDs
+    'gemini-2.5-flash': 'gemini-2.5-flash-preview-05-20',
+    'gemini-2.0-flash-lite': 'gemini-2.0-flash-lite-001', 
+    'gemini-2.5-pro': 'gemini-2.5-pro-001'
+}
 
 class PageMessage(BaseModel):
     job_id: str
@@ -149,15 +159,25 @@ def init_connections():
             # Create Kafka topics if they don't exist
             create_kafka_topics()
             
-            # Initialize GCP AI Platform
+            # Initialize GCP AI Platform with specific service account if provided
+            if GOOGLE_APPLICATION_CREDENTIALS:
+                if os.path.exists(GOOGLE_APPLICATION_CREDENTIALS):
+                    logger.info(f"Using service account key for Vertex AI from GOOGLE_APPLICATION_CREDENTIALS: {GOOGLE_APPLICATION_CREDENTIALS}")
+                else:
+                    logger.warning(f"Service account key file specified in GOOGLE_APPLICATION_CREDENTIALS not found: {GOOGLE_APPLICATION_CREDENTIALS}. Falling back to default credentials.")
+            else:
+                logger.info("GOOGLE_APPLICATION_CREDENTIALS not set. Attempting to use default Google Cloud credentials for Vertex AI.")
+
             try:
                 logger.info("=== INITIALIZING GCP AI PLATFORM ===")
                 aiplatform.init(project=GCP_PROJECT_ID, location=GCP_LOCATION)
                 logger.info(f"=== GCP AI PLATFORM INITIALIZED FOR PROJECT: {GCP_PROJECT_ID} ===")
             except Exception as e:
-                logger.warning(f"=== GCP AI PLATFORM INITIALIZATION FAILED: {e} ===")
-            
-            # If we reach here, all connections successful
+                logger.error(f"=== GCP AI PLATFORM INITIALIZATION FAILED: {e} ===")
+                # Depending on requirements, you might want to raise an error here
+                # if Vertex AI is critical for the service to function.
+
+            # If we reach here, all primary connections successful
             logger.info("=== ALL CONNECTIONS INITIALIZED SUCCESSFULLY ===")
             return
             
@@ -172,31 +192,77 @@ def init_connections():
                 logger.error("=== ALL CONNECTION ATTEMPTS FAILED ===")
                 raise
 
-def process_page_with_vertex_ai(image_data: str, model: str) -> Dict[str, Any]:
+def process_page_with_vertex_ai(image_data: str, model_key: str) -> Dict[str, Any]:
     """Process a single page image with Vertex AI"""
     try:
-        # For demo purposes, simulate Vertex AI processing
-        # In real implementation, this would call the actual Vertex AI API
-        logger.info(f"Processing page with model: {model}")
-        
-        # Simulate processing time
-        import time
-        time.sleep(2)
-        
-        # Return mock extraction result
+        actual_model_name = model_endpoints.get(model_key)
+        if not actual_model_name:
+            logger.error(f"Unknown model key: {model_key}. Available models: {list(model_endpoints.keys())}")
+            raise ValueError(f"Invalid model key: {model_key}")
+
+        logger.info(f"Processing page with Vertex AI model: {actual_model_name} (key: {model_key})")
+
+        vertex_model = GenerativeModel(actual_model_name)
+
+        # Decode base64 image data
+        try:
+            image_bytes = base64.b64decode(image_data)
+        except Exception as e:
+            logger.error(f"Failed to decode base64 image data: {e}")
+            raise ValueError("Invalid base64 image data")
+
+        # Assuming PNG, adjust if other types are common.
+        # Consider dynamically determining mime_type if possible or passing it in PageMessage.
+        image_part = Part.from_data(data=image_bytes, mime_type="image/png")
+
+        prompt = "Extract all text from this image. Provide only the extracted text."
+
+        generation_config = {
+            "max_output_tokens": 8192,
+            "temperature": 0.2,
+            "top_p": 0.95,
+        }
+
+        safety_settings = {
+            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        }
+
+        response = vertex_model.generate_content(
+            [image_part, prompt],
+            generation_config=generation_config,
+            safety_settings=safety_settings,
+            stream=False,
+        )
+
+        extracted_text = ""
+        if not response.candidates:
+            block_reason = response.prompt_feedback.block_reason if response.prompt_feedback else 'Unknown'
+            logger.warning(f"No candidates from Vertex AI for model {actual_model_name}. Finish reason: {block_reason}")
+            extracted_text = f"Error: No content generated. Reason: {block_reason}"
+        elif response.candidates[0].finish_reason.name != "STOP":
+            finish_reason_name = response.candidates[0].finish_reason.name
+            logger.warning(f"Vertex AI generation finished with reason: {finish_reason_name} for model {actual_model_name}")
+            extracted_text = f"Error: Generation finished unexpectedly. Reason: {finish_reason_name}"
+        elif response.candidates[0].content.parts:
+            extracted_text = response.candidates[0].text
+
+        logger.info(f"Extracted Text : {extracted_text}")
+
         return {
-            "extracted_text": f"Sample extracted text from {model}",
-            "confidence_score": 0.95,
-            "processing_model": model,
+            "extracted_text": extracted_text,
+            "confidence_score": 0.95,  # Placeholder, Gemini doesn't provide OCR-like confidence
+            "processing_model": model_key,
             "timestamp": datetime.utcnow().isoformat()
         }
-        
     except Exception as e:
         logger.error(f"Vertex AI processing failed: {e}")
         return {
             "extracted_text": "Error during processing",
             "confidence_score": 0.0,
-            "processing_model": model,
+            "processing_model": model_key,
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }
@@ -214,12 +280,16 @@ def aggregate_document_with_vertex_ai(page_results: List[Dict], model: str) -> D
         time.sleep(3)
         
         # Return mock aggregation result
-        return {
+        record = {
             "document_overview": f"Document processed with {model}. Contains {len(page_results)} pages.",
-            "markdown_content": f"# Document Analysis\n\n## Summary\n{all_text[:500]}...\n\n## Pages: {len(page_results)}",
+            "markdown_content": f"# Document Analysis\n\n## Summary\n{all_text[:50000]}...\n\n## Pages: {len(page_results)}",
             "processing_model": model,
             "timestamp": datetime.utcnow().isoformat()
         }
+
+        logger.info(str(record))
+
+        return record
         
     except Exception as e:
         logger.error(f"Document aggregation failed: {e}")

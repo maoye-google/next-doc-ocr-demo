@@ -12,7 +12,7 @@ function LLMProcessor({
   setGlobalLoading
 }) {
   // LLM processing states
-  const [llmModel, setLlmModel] = useState('gemini-2.0-flash');
+  const [llmModel, setLlmModel] = useState('gemini-2.5-flash');
   // Remove local currentJobId state - use the shared one from App component
   const [jobStatus, setJobStatus] = useState(null);
   const [llmResults, setLlmResults] = useState(null);
@@ -343,10 +343,9 @@ function LLMProcessor({
                 backgroundColor: loading ? '#e9ecef' : 'white'
               }}
             >
-              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-              <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-              <option value="gpt-4o">GPT-4o</option>
-              <option value="claude-3-sonnet">Claude 3 Sonnet</option>
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
             </select>
           </div>
 

@@ -5,6 +5,7 @@ services:
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
     container_name: zookeeper
+    user: root
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -14,6 +15,7 @@ services:
   kafka:
     image: confluentinc/cp-kafka:latest
     container_name: kafka
+    user: root
     depends_on:
       - zookeeper
     ports:
@@ -76,7 +78,7 @@ services:
       PYTHONUNBUFFERED: 1
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       MONGODB_URL: mongodb://mongodb:27017/ocr_demo
-      GOOGLE_APPLICATION_CREDENTIALS: /app/credentials/service-account.json
+      GOOGLE_APPLICATION_CREDENTIALS: /app/credentials/claude-code-sa-key.json
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-demo-project}
       GCP_LOCATION: ${GCP_LOCATION:-us-central1}
     volumes:
