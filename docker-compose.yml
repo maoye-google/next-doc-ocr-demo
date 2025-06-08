@@ -12,18 +12,21 @@ services:
     networks:
       - ocr_network
 
-  kafka:
+  local-kafka:
     image: confluentinc/cp-kafka:latest
-    container_name: kafka
+    container_name: local-kafka
     user: root
     depends_on:
       - zookeeper
     ports:
       - "9092:9092"
+      - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://local-kafka:9092,INTERNAL://local-kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     networks:
@@ -58,12 +61,12 @@ services:
       - ./doc-ocr-backend/app:/app/app
     environment:
       PYTHONUNBUFFERED: 1
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BROKER: local-kafka:29092
       MONGODB_URL: mongodb://mongodb:27017/ocr_demo
     networks:
       - ocr_network
     depends_on:
-      kafka:
+      local-kafka:
         condition: service_healthy
       mongodb:
         condition: service_started
@@ -76,7 +79,7 @@ services:
       dockerfile: Dockerfile
     environment:
       PYTHONUNBUFFERED: 1
-      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BROKER: local-kafka:29092
       MONGODB_URL: mongodb://mongodb:27017/ocr_demo
       GOOGLE_APPLICATION_CREDENTIALS: /app/credentials/claude-code-sa-key.json
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-demo-project}
@@ -87,7 +90,7 @@ services:
     networks:
       - ocr_network
     depends_on:
-      kafka:
+      local-kafka:
         condition: service_healthy
       mongodb:
         condition: service_started

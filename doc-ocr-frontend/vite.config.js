@@ -14,7 +14,8 @@ export default defineConfig({
         changeOrigin: true,
         // rewrite: (path) => path.replace(/^\/api/, '')
       }
-    }
+    },
+    allowedHosts: ['doc-ocr.maoye.demo.altostrat.com'],
   },
   build: {
     outDir: 'build' // Output directory for 'npm run build'

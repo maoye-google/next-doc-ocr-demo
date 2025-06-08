@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Environment variables
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:29092")
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/ocr_demo")
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID", "demo-project")
 GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
@@ -62,7 +62,7 @@ def create_kafka_topics():
         
         # Initialize Kafka Admin Client
         admin_client = KafkaAdminClient(
-            bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+            bootstrap_servers=[KAFKA_BROKER],
             api_version=(0, 10, 1)
         )
         
@@ -129,7 +129,7 @@ def init_connections():
     
     logger.info("=== DOC-OCR-PROCESSING INITIALIZING CONNECTIONS ===")
     logger.info(f"MongoDB URL: {MONGODB_URL}")
-    logger.info(f"Kafka bootstrap servers: {KAFKA_BOOTSTRAP_SERVERS}")
+    logger.info(f"Kafka broker servers: {KAFKA_BROKER}")
     logger.info(f"GCP Project: {GCP_PROJECT_ID}")
     logger.info(f"GCP Location: {GCP_LOCATION}")
     
@@ -148,7 +148,7 @@ def init_connections():
             # Initialize Kafka Producer with retry
             logger.info(f"=== CONNECTING TO KAFKA PRODUCER === (attempt {attempt + 1}/{max_retries})")
             kafka_producer = KafkaProducer(
-                bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+                bootstrap_servers=[KAFKA_BROKER],
                 value_serializer=lambda v: json.dumps(v).encode('utf-8'),
                 api_version=(0, 10, 1),  # Use older API version for compatibility
                 retries=3,
@@ -448,14 +448,14 @@ async def kafka_consumer_task():
     try:
         # Initialize Kafka Consumer
         logger.info("=== INITIALIZING KAFKA CONSUMER ===")
-        logger.info(f"Bootstrap servers: {KAFKA_BOOTSTRAP_SERVERS}")
+        logger.info(f"Kafka Broker servers: {KAFKA_BROKER}")
         logger.info("Topics: page-processing-topic, aggregation-trigger-topic")
         logger.info("Consumer group: doc-ocr-processing-group")
         
         kafka_consumer = KafkaConsumer(
             'page-processing-topic',
             'aggregation-trigger-topic',
-            bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+            bootstrap_servers=[KAFKA_BROKER],
             value_deserializer=lambda m: json.loads(m.decode('utf-8')),
             group_id='doc-ocr-processing-group',
             auto_offset_reset='earliest',  # Changed from 'latest' to 'earliest' 

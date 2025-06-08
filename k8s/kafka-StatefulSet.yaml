@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: doc-ocr
+spec:
+  serviceName: local-kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+      initContainers:
+      - name: kafka-init
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          # Clean up any existing Kafka data to avoid conflicts
+          rm -rf /var/lib/kafka/data/*
+          # Remove lost+found if it exists (harmless if it doesn't)
+          rm -rf /var/lib/kafka/data/lost+found || true
+          # Ensure the data directory exists and is clean for Kafka to manage
+          mkdir -p /var/lib/kafka/data
+          # Set proper permissions
+          chown -R 1000:1000 /var/lib/kafka/data
+        volumeMounts:
+        - name: kafka-data
+          mountPath: /var/lib/kafka/data
+        securityContext:
+          runAsUser: 0
+      containers:
+      - name: kafka
+        image: confluentinc/cp-kafka:7.3.0
+        ports:
+        - containerPort: 9092
+        - containerPort: 29092
+        env:
+        - name: KAFKA_BROKER_ID
+          value: "1"
+        - name: KAFKA_ZOOKEEPER_CONNECT
+          value: "zookeeper:2181"
+        - name: KAFKA_LISTENERS
+          value: "PLAINTEXT://0.0.0.0:9092,INTERNAL://0.0.0.0:29092"
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://local-kafka:9092,INTERNAL://local-kafka:29092"
+        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+          value: "PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT"
+        - name: KAFKA_INTER_BROKER_LISTENER_NAME
+          value: "INTERNAL"
+        - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+          value: "true"
+        - name: KAFKA_LOG_DIRS
+          value: "/var/lib/kafka/data"
+        - name: KAFKA_DEFAULT_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_MIN_INSYNC_REPLICAS
+          value: "1"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: kafka-data
+          mountPath: /var/lib/kafka/data
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+        readinessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: kafka-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 2Gi

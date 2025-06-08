@@ -1,0 +1,36 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: doc-ocr-ingress
+  namespace: doc-ocr
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: doc-ocr-ip
+    networking.gke.io/managed-certificates: doc-ocr-ssl-cert
+    kubernetes.io/ingress.class: gce
+    kubernetes.io/ingress.allow-http: "false"
+spec:
+  rules:
+  - host: doc-ocr.maoye.demo.altostrat.com
+    http:
+      paths:
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: doc-ocr-backend
+            port:
+              number: 8000
+      - path: /api/*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: doc-ocr-backend
+            port:
+              number: 8000
+      - path: /*
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: doc-ocr-frontend
+            port:
+              number: 80

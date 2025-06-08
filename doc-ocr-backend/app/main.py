@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Environment variables
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:29092")
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/ocr_demo")
 
 # Global variables for connections
@@ -191,7 +191,7 @@ def init_connections():
         
         # Initialize Kafka Producer with retry logic
         logger.info(f"=== CONNECTING TO KAFKA ===")
-        logger.info(f"Kafka bootstrap servers: {KAFKA_BOOTSTRAP_SERVERS}")
+        logger.info(f"Kafka Broker servers: {KAFKA_BROKER}")
         
         max_retries = 5
         retry_delay = 2
@@ -199,7 +199,7 @@ def init_connections():
         for attempt in range(max_retries):
             try:
                 kafka_producer = KafkaProducer(
-                    bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+                    bootstrap_servers=[KAFKA_BROKER],
                     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
                     retries=3,
                     request_timeout_ms=30000,
@@ -332,7 +332,7 @@ def publish_page_to_kafka(job_id: str, page_number: int, image_data: str, llm_mo
         logger.error(f"=== KAFKA SEND FAILED ===")
         logger.error(f"Failed to publish to Kafka: {e}")
         logger.error(f"Exception type: {type(e).__name__}")
-        logger.error(f"Kafka producer bootstrap servers: {KAFKA_BOOTSTRAP_SERVERS}")
+        logger.error(f"Kafka producer broker servers: {KAFKA_BROKER}")
 
 def publish_aggregation_signal(job_id: str, llm_model: str, total_pages: int):
     """Publish aggregation signal to Kafka"""
@@ -688,6 +688,45 @@ def process_file_for_llm(file_bytes: bytes, filename: str, content_type: str, ll
 async def read_root():
     """Returns a welcome message for the OCR backend service."""
     return {"message": "OCR Backend Service is running"}
+
+@app.get("/health", summary="Health check endpoint", response_model=dict)
+async def health_check():
+    """Returns the health status of the OCR backend service."""
+    try:
+        # Check if OCR instance is available
+        ocr_status = "healthy" if ocr_instance is not None else "unhealthy"
+        
+        # Check database connection if available
+        db_status = "healthy"
+        if mongo_client is not None:
+            try:
+                mongo_client.admin.command('ping')
+            except Exception:
+                db_status = "unhealthy"
+        else:
+            db_status = "unavailable"
+        
+        # Check Kafka connection if available
+        kafka_status = "healthy" if kafka_producer is not None else "unavailable"
+        
+        overall_status = "healthy" if ocr_status == "healthy" else "unhealthy"
+        
+        return {
+            "status": overall_status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "services": {
+                "ocr": ocr_status,
+                "database": db_status,
+                "kafka": kafka_status
+            }
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e)
+        }
 
 @app.post("/api/ocr/process/", summary="Process an uploaded file (image or PDF) for OCR", response_model=OCRResponse)
 async def ocr_process_file(file: UploadFile = File(...)):

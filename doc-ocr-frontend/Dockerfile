@@ -1,5 +1,5 @@
-# Use an official Node runtime as a parent image
-FROM node:18-alpine
+# Build stage
+FROM node:18-alpine as build
 
 # Set the working directory in the container
 WORKDIR /app
@@ -13,8 +13,20 @@ RUN npm install
 # Copy the rest of the application code
 COPY . .
 
-# Make port 5173 available to the world outside this container
-EXPOSE 5173
+# Build the app for production
+RUN npm run build
 
-# Run the app when the container launches
-CMD ["npm", "run", "dev"]
+# Production stage
+FROM nginx:alpine
+
+# Copy the build output to nginx html directory
+COPY --from=build /app/build /usr/share/nginx/html
+
+# Copy custom nginx configuration if exists
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Make port 80 available to the world outside this container
+EXPOSE 80
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]

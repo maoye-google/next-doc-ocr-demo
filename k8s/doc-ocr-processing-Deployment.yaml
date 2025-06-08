@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doc-ocr-processing
+  namespace: doc-ocr
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: doc-ocr-processing
+  template:
+    metadata:
+      labels:
+        app: doc-ocr-processing
+    spec:
+      containers:
+      - name: doc-ocr-processing
+        image: gcr.io/${PROJECT_ID}/doc-ocr-processing:latest
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: KAFKA_BROKER
+          value: "local-kafka:29092"
+        - name: MONGODB_URL
+          value: "mongodb://mongodb:27017/ocr_demo"
+        - name: GOOGLE_APPLICATION_CREDENTIALS
+          value: "/app/credentials/key.json"
+        - name: GCP_PROJECT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['project-id']
+        - name: GCP_LOCATION
+          value: "us-central1"
+        volumeMounts:
+        - name: vertex-ai-key
+          mountPath: /app/credentials
+          readOnly: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: vertex-ai-key
+        secret:
+          secretName: vertex-ai-sa-key
