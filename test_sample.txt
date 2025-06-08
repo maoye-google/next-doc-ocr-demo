@@ -1,0 +1,6 @@
+Hello World
+This is a test document
+For OCR processing
+Line 1: Sample text
+Line 2: Another line
+Line 3: Final test line

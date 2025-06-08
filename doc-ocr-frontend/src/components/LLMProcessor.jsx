@@ -1,88 +1,241 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
+// Markdown Dialog Component
+function MarkdownDialog({ markdownContent, onClose }) {
+  const [position, setPosition] = useState({ x: 50, y: 50 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dialogRef = useRef(null);
+
+  const handleMouseDown = (e) => {
+    if (e.target.closest('.markdown-dialog-content') || e.target.closest('.close-button')) {
+      return;
+    }
+    
+    setIsDragging(true);
+    const rect = dialogRef.current.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDragging) return;
+    
+    setPosition({
+      x: e.clientX - dragOffset.x,
+      y: e.clientY - dragOffset.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, dragOffset]);
+
+  // Simple markdown to HTML conversion
+  const convertMarkdownToHTML = (markdown) => {
+    if (!markdown) return '';
+    
+    let html = markdown
+      // Headers
+      .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+      .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+      .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+      // Blockquotes
+      .replace(/^> (.*$)/gm, '<blockquote>$1</blockquote>')
+      // Lists (simple unordered and ordered)
+      .replace(/^\* (.*$)/gm, '<ul><li>$1</li></ul>') // Unordered
+      .replace(/^\- (.*$)/gm, '<ul><li>$1</li></ul>') // Unordered (alternative)
+      .replace(/^\d+\. (.*$)/gm, '<ol><li>$1</li></ol>') // Ordered
+      // Code blocks (simple inline and fenced)
+      .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      // Bold and italic
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      // Horizontal rules
+      .replace(/^---$/gm, '<hr>')
+      // Line breaks
+      .replace(/\n\n/g, '</p><p>')
+      .replace(/\n/g, '<br>')
+      // Wrap in paragraphs
+      .replace(/^(.+)/, '<p>$1')
+      .replace(/(.+)$/, '$1</p>');
+
+    // Consolidate adjacent list items
+    html = html.replace(/<\/ul>\s*<ul>/g, '');
+    html = html.replace(/<\/ol>\s*<ol>/g, '');
+
+    return html;
+  };
+
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      zIndex: 1000,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }}>
+      <div 
+        ref={dialogRef}
+        style={{
+          position: 'relative',
+          left: position.x,
+          top: position.y,
+          width: '80%',
+          maxWidth: '800px',
+          maxHeight: '80%',
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+        onMouseDown={handleMouseDown}
+      >
+        <div style={{
+          padding: '20px',
+          borderBottom: '1px solid #dee2e6',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          backgroundColor: '#f8f9fa',
+          borderRadius: '8px 8px 0 0'
+        }}>
+          <h3 style={{ margin: 0, color: '#495057' }}>Document Analysis Result</h3>
+          <button 
+            className="close-button"
+            onClick={onClose}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: '24px',
+              cursor: 'pointer',
+              color: '#6c757d',
+              padding: '0',
+              width: '30px',
+              height: '30px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            ×
+          </button>
+        </div>
+        <div 
+          className="markdown-dialog-content"
+          style={{
+            padding: '20px',
+            overflowY: 'auto',
+            flex: 1,
+            cursor: 'auto'
+          }}
+        >
+          <div 
+            dangerouslySetInnerHTML={{ 
+              __html: convertMarkdownToHTML(markdownContent) 
+            }}
+            style={{
+              lineHeight: '1.6',
+              color: '#333',
+              fontSize: '14px',
+              textAlign: 'left',
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LLMProcessor({ 
   selectedFile, 
-  loading, 
-  setLoading, 
-  setError,
+  globalLoading,
+  setGlobalLoading,
   currentJobId,
   setCurrentJobId,
-  globalLoading,
-  setGlobalLoading
+  setJobType,
+  setJobStatus,
+  setLlmResults,
+  setError,
+  setJobProgress
 }) {
   // LLM processing states
   const [llmModel, setLlmModel] = useState('gemini-2.5-flash');
-  // Remove local currentJobId state - use the shared one from App component
-  const [jobStatus, setJobStatus] = useState(null);
-  const [llmResults, setLlmResults] = useState(null);
-  const [documentHistory, setDocumentHistory] = useState([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [pollingInterval, setPollingInterval] = useState(null);
-  const [lastHistoryUpdate, setLastHistoryUpdate] = useState(null);
+  const [localJobStatus, setLocalJobStatus] = useState(null);
+  const [localLlmResults, setLocalLlmResults] = useState(null); // This can still be used for local display within LLMProcessor if needed
+  // const [showMarkdownDialog, setShowMarkdownDialog] = useState(false); // App.jsx will control dialog via llmResults prop
 
   // Use refs to store the latest values for the interval callback
   const currentJobIdRef = useRef(currentJobId);
+
+  // Refs for props from App.jsx to ensure the latest functions are called from closures
   const setGlobalLoadingRef = useRef(setGlobalLoading);
-  const setLoadingRef = useRef(setLoading);
-  const loadingRef = useRef(loading);
-  const pollingIntervalRef = useRef(pollingInterval);
+  const setCurrentJobIdRef = useRef(setCurrentJobId);
+  const setJobTypeRef = useRef(setJobType);
+  const setJobStatusRef = useRef(setJobStatus);
+  const setLlmResultsRef = useRef(setLlmResults);
+  const setErrorRef = useRef(setError);
+  const setJobProgressRef = useRef(setJobProgress);
+
+  const pollingIntervalIdRef = useRef(null); // Stores the actual interval ID
 
   // Update refs when values change
   useEffect(() => {
     currentJobIdRef.current = currentJobId;
   }, [currentJobId]);
 
+  // Update refs for callback props. These setters from App's useState are stable.
   useEffect(() => {
     setGlobalLoadingRef.current = setGlobalLoading;
-  }, [setGlobalLoading]);
-
-  useEffect(() => {
-    setLoadingRef.current = setLoading;
-  }, [setLoading]);
-
-  useEffect(() => {
-    loadingRef.current = loading;
-  }, [loading]);
-
-  useEffect(() => {
-    pollingIntervalRef.current = pollingInterval;
-  }, [pollingInterval]);
+    setCurrentJobIdRef.current = setCurrentJobId;
+    setJobTypeRef.current = setJobType;
+    setJobStatusRef.current = setJobStatus;
+    setLlmResultsRef.current = setLlmResults;
+    setErrorRef.current = setError;
+    setJobProgressRef.current = setJobProgress;
+  }, [setGlobalLoading, setCurrentJobId, setJobType, setJobStatus, setLlmResults, setError, setJobProgress]);
 
   // Reset states when file changes
   useEffect(() => {
     if (selectedFile) {
-      // Only reset job states, not currentJobId (let App.jsx handle that)
-      setJobStatus(null);
-      setLlmResults(null);
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
-        setPollingInterval(null);
-      }
+      setLocalJobStatus(null);
+      // setLocalLlmResults(null); // App.jsx will manage llmResults prop
+      // If a file changes, any ongoing polling for a previous file should stop.
+      // This is handled by the cleanup effect below.
     }
-  }, [selectedFile, pollingInterval]);
-
-  // Load document history on component mount and start periodic refresh
-  useEffect(() => {
-    loadDocumentHistory();
-    
-    // Set up periodic refresh of document history every 10 seconds
-    const historyInterval = setInterval(loadDocumentHistory, 10000);
-    
-    // Cleanup interval on unmount
-    return () => {
-      clearInterval(historyInterval);
-    };
-  }, []);
+  }, [selectedFile]);
 
   // Cleanup polling on unmount
   useEffect(() => {
     return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval);
+      if (pollingIntervalIdRef.current) {
+        clearInterval(pollingIntervalIdRef.current);
+        pollingIntervalIdRef.current = null;
       }
     };
-  }, [pollingInterval]);
+  }, []); // Empty dependency array means this runs only on mount and unmount.
 
   const handleLlmUpload = async () => {
     if (!selectedFile) {
@@ -90,11 +243,12 @@ function LLMProcessor({
       return;
     }
 
-    setLoading(true);
-    setGlobalLoading(true); // Set global loading state
-    setError(''); // Clear any previous errors from App component too
-    setLlmResults(null);
-    setJobStatus(null);
+    setGlobalLoadingRef.current(true);
+    setJobTypeRef.current('llm');
+    setJobStatusRef.current('processing');
+    setErrorRef.current('');
+    setLocalLlmResults(null);
+    setLocalJobStatus(null);
 
     const formData = new FormData();
     formData.append('file', selectedFile);
@@ -109,13 +263,13 @@ function LLMProcessor({
       });
 
       if (response.data.success && response.data.job_id) {
-        setCurrentJobId(response.data.job_id);
-        // Immediately update the ref to ensure loadDocumentHistory can access it
+        setCurrentJobIdRef.current(response.data.job_id);
         currentJobIdRef.current = response.data.job_id;
         startPolling(response.data.job_id);
       } else {
-        setError(response.data.message || 'LLM processing failed to start.');
-        setLoading(false);
+        setErrorRef.current(response.data.message || 'LLM processing failed to start.');
+        setGlobalLoadingRef.current(false);
+        setJobStatusRef.current('error');
       }
     } catch (err) {
       console.error('LLM Upload Error:', err);
@@ -125,177 +279,109 @@ function LLMProcessor({
       } else if (err.request) {
         errorMsg = 'No response from server. Check network or backend status.';
       }
-      setError(errorMsg);
-      setLoading(false);
+      setErrorRef.current(errorMsg);
+      setGlobalLoadingRef.current(false);
+      setJobStatusRef.current('error');
     }
   };
 
   const startPolling = (jobId) => {
-    
-    // Check status immediately first
+    // Clear any existing interval before starting a new one for this job instance
+    console.log(`[LLM Polling ${jobId}] startPolling called. Clearing existing interval if any: ${pollingIntervalIdRef.current}`);
     const checkStatus = async () => {
       try {
+        console.log(`[LLM Polling ${jobId}] checkStatus: Fetching status for ${jobId}`);
         const response = await axios.get(`api/documents/${jobId}/status`);
-        setJobStatus(response.data);
+        setLocalJobStatus(response.data);
+        
+        if (response.data.progress) {
+          setJobProgressRef.current(response.data.progress);
+        }
         
         if (response.data.status === 'completed') {
-          setLlmResults(response.data.results);
+          console.log(`[LLM Polling ${jobId}] === Job is Completed ===`)
+          console.log(`currentJobIdRef.current is ${currentJobIdRef.current}`)
+
+          // setLocalLlmResults(response.data.results); // App.jsx will receive this via setLlmResultsRef
+          setLlmResultsRef.current(response.data.results);
+          setGlobalLoadingRef.current(false);
+          setJobStatusRef.current('completed');
           
-          // Clear both loading states
-          setGlobalLoading(false);
-          setLoading(false);
-          
-          // Call the callback to update App component
-          if (onJobStatusUpdate) {
-            onJobStatusUpdate(jobId, 'completed', response.data.results);
+          if (pollingIntervalIdRef.current) {
+            clearInterval(pollingIntervalIdRef.current);
+            pollingIntervalIdRef.current = null;
           }
-          
-          if (pollingInterval) {
-            clearInterval(pollingInterval);
-            setPollingInterval(null);
-          }
-          // Immediately refresh history when job completes
-          setTimeout(() => loadDocumentHistory(), 500);
           return true; // Stop polling
         } else if (response.data.status === 'error') {
+          console.log(`[LLM Polling ${jobId}] checkStatus: Status is 'error'. Stop polling.`);
+          setGlobalLoadingRef.current(false);
+          setJobStatusRef.current('error');
+          setErrorRef.current('LLM processing failed.');
           
-          // Clear both loading states
-          setGlobalLoading(false);
-          setLoading(false);
-          
-          // Call the callback to update App component
-          if (onJobStatusUpdate) {
-            onJobStatusUpdate(jobId, 'error', null);
+          if (pollingIntervalIdRef.current) {
+            clearInterval(pollingIntervalIdRef.current);
+            pollingIntervalIdRef.current = null;
           }
-          
-          if (pollingInterval) {
-            clearInterval(pollingInterval);
-            setPollingInterval(null);
-          }
-          // Also refresh history on error to show updated status
-          setTimeout(() => loadDocumentHistory(), 500);
           return true; // Stop polling
+        } else if (response.data.status === 'processing') {
+          console.log(`[LLM Polling ${jobId}] checkStatus: Status is 'processing'. Continue polling.`);
+          return false; // Continue polling
         } else {
+          console.log(`[LLM Polling ${jobId}] checkStatus: Status is '${response.data.status}'. Assuming non-terminal, continue polling.`);
           return false; // Continue polling
         }
       } catch (err) {
-        console.error('Polling error:', err);
-        // Continue polling on error, but add some basic error handling
+        console.error(`[LLM Polling ${jobId}] Polling error during checkStatus:`, err);
         if (err.response && err.response.status === 404) {
           console.error(`Job ${jobId} not found. Stopping polling.`);
-          setError('Job not found in system.');
-          setGlobalLoading(false);
-          setLoading(false);
-          if (pollingInterval) {
-            clearInterval(pollingInterval);
-            setPollingInterval(null);
-          }
-          return true; // Stop polling
+          setErrorRef.current('Job not found in system.');
         }
-        return false; // Continue polling on other errors
+        // For other polling errors, we might want to stop loading and set error status
+        // to prevent UI from being stuck in loading indefinitely.
+        setGlobalLoadingRef.current(false);
+        setJobStatusRef.current('error');
+        if (pollingIntervalIdRef.current) {
+          clearInterval(pollingIntervalIdRef.current);
+          pollingIntervalIdRef.current = null;
+          }
+        return true; // Stop polling on any error to prevent infinite loops on persistent issues
       }
     };
     
-    // Check immediately on start
-    checkStatus().then(shouldStop => {
-      if (shouldStop) {
+    // Initial check
+    console.log(`[LLM Polling ${jobId}] Performing initial checkStatus call.`);
+    checkStatus().then(shouldStopInitial => { // Renamed for clarity
+      console.log(`[LLM Polling ${jobId}] Initial checkStatus returned: shouldStopInitial = ${shouldStopInitial}`);
+      if (shouldStopInitial) {
+        // If job is already completed or errored on the first check, do nothing more.
+        // The global loading and status would have been set inside checkStatus.
+        console.log(`[LLM Polling ${jobId}] Initial check indicates job is already terminal. Not starting interval.`);
         return;
       }
       
-      // Start periodic polling
-      const interval = setInterval(async () => {
-        const shouldStop = await checkStatus();
-        if (shouldStop) {
-          clearInterval(interval);
-          setPollingInterval(null);
+      // If the job is still processing, set up the interval.
+      // The previous diff correctly changed this part to use pollingIntervalIdRef.
+      console.log(`[LLM Polling ${jobId}] Initial check indicates job is NOT terminal. Setting up setInterval.`);
+      pollingIntervalIdRef.current = setInterval(async () => {
+        console.log(`[LLM Polling ${jobId}] Interval tick: Calling checkStatus. Current interval ID: ${pollingIntervalIdRef.current}`);
+        const shouldStopInterval = await checkStatus();
+        if (shouldStopInterval) {
+          console.log(`[LLM Polling ${jobId}] Interval tick: checkStatus returned true (job terminal or error). Clearing interval.`);
+          if (pollingIntervalIdRef.current) clearInterval(pollingIntervalIdRef.current);
+          pollingIntervalIdRef.current = null;
         }
-      }, 3000); // Poll every 3 seconds for faster response
-      
-      setPollingInterval(interval);
+      }, 3000);
+      console.log(`[LLM Polling ${jobId}] setInterval has been set. Interval ID: ${pollingIntervalIdRef.current}`);
     });
   };
 
-  const loadDocumentHistory = async () => {
-    try {
-      const response = await axios.get('api/documents/history');
-      setDocumentHistory(response.data.documents || []);
-      setLastHistoryUpdate(new Date());
-      
-      // Check if current job is in the history and call callback
-      const currentJobId = currentJobIdRef.current;
-      const setGlobalLoading = setGlobalLoadingRef.current;
-      const setLoading = setLoadingRef.current;
-      const pollingInterval = pollingIntervalRef.current;
-
-      if (currentJobId && setGlobalLoading) {
-        const currentJob = response.data.documents.find(doc => doc.job_id === currentJobId);
-        if (currentJob) {
-          
-          if (currentJob.status === 'completed') {
-            
-            // Get full job results
-            try {
-              const jobResponse = await axios.get(`api/documents/${currentJobId}/status`);
-              setJobStatus(jobResponse.data);
-              setLlmResults(jobResponse.data.results);
-              
-              // Clear both loading states
-              setGlobalLoading(false);
-              if (setLoading) setLoading(false);
-              
-              // Clear polling if it's still running
-              if (pollingInterval) {
-                clearInterval(pollingInterval);
-                setPollingInterval(null);
-              }
-            } catch (err) {
-              console.error('Error fetching job results:', err);
-              // Clear loading anyway
-              setGlobalLoading(false);
-              if (setLoading) setLoading(false);
-            }
-          } else if (currentJob.status === 'error') {
-            
-            // Clear both loading states
-            setGlobalLoading(false);
-            if (setLoading) setLoading(false);
-            setError('LLM processing failed.');
-            
-            // Clear polling if it's still running
-            if (pollingInterval) {
-              clearInterval(pollingInterval);
-              setPollingInterval(null);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Error loading document history:', err);
-    }
-  };
-
-  const deleteAllDocuments = async () => {
-    if (!window.confirm('Are you sure you want to delete all document history?')) {
-      return;
-    }
-    
-    try {
-      await axios.delete('api/documents/all');
-      setDocumentHistory([]);
-      setShowHistory(false);
-    } catch (err) {
-      console.error('Error deleting documents:', err);
-      setError('Failed to delete documents.');
-    }
-  };
-
   const downloadMarkdown = () => {
-    if (!llmResults || !llmResults.markdown_content) {
+    if (!localLlmResults || !localLlmResults.markdown_content) {
       setError('No markdown content to download.');
       return;
     }
     
-    const blob = new Blob([llmResults.markdown_content], { type: 'text/markdown' });
+    const blob = new Blob([localLlmResults.markdown_content], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -306,272 +392,194 @@ function LLMProcessor({
     URL.revokeObjectURL(url);
   };
 
-
   return (
-    <div>
-      {/* LLM Processing Section */}
-      {selectedFile && (
-        <div className="llm-processing-section" style={{
-          margin: '20px 0',
-          padding: '20px',
-          backgroundColor: '#f8f9fa',
-          borderRadius: '8px',
-          border: '1px solid #dee2e6'
+    <div style={{
+      margin: '20px 0',
+      padding: '20px',
+      backgroundColor: '#f8f9fa',
+      borderRadius: '8px',
+      border: '1px solid #dee2e6'
+    }}>
+      <h3 style={{ marginBottom: '15px', color: '#495057' }}>LLM Processor</h3>
+      
+      <div style={{ marginBottom: '15px' }}>
+        <label htmlFor="llm-model" style={{ 
+          display: 'block', 
+          marginBottom: '5px', 
+          fontWeight: '500',
+          color: '#495057'
         }}>
-          <h3 style={{ marginBottom: '15px', color: '#495057' }}>LLM Document Analysis</h3>
-          
-          <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="llm-model" style={{ 
-              display: 'block', 
-              marginBottom: '5px', 
-              fontWeight: '500',
-              color: '#495057'
-            }}>
-              Select LLM Model:
-            </label>
-            <select 
-              id="llm-model"
-              value={llmModel} 
-              onChange={(e) => setLlmModel(e.target.value)}
-              disabled={loading}
-              style={{
-                padding: '8px 12px',
-                borderRadius: '4px',
-                border: '1px solid #ced4da',
-                fontSize: '14px',
-                minWidth: '200px',
-                backgroundColor: loading ? '#e9ecef' : 'white'
-              }}
-            >
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-              <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-            </select>
-          </div>
+          Select LLM Model:
+        </label>
+        <select 
+          id="llm-model"
+          value={llmModel} 
+          onChange={(e) => setLlmModel(e.target.value)}
+          disabled={globalLoading}
+          style={{
+            padding: '8px 12px',
+            borderRadius: '4px',
+            border: '1px solid #ced4da',
+            fontSize: '14px',
+            minWidth: '200px',
+            backgroundColor: globalLoading ? '#e9ecef' : 'white'
+          }}
+        >
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+          <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</option>
+          <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+        </select>
+      </div>
 
-          <button 
-            onClick={handleLlmUpload}
-            disabled={globalLoading || !selectedFile}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '10px 20px',
-              fontSize: '16px',
-              fontWeight: '500',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: (globalLoading || !selectedFile) ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s ease',
-              backgroundColor: globalLoading ? '#6c757d' : '#17a2b8',
-              color: 'white',
-              opacity: (globalLoading || !selectedFile) ? 0.6 : 1
-            }}
-          >
-            <span style={{ fontSize: '18px' }}>🤖</span>
-            {globalLoading && currentJobId ? 'Processing with LLM...' : 'Upload for Process (LLM)'}
-          </button>
+      <button 
+        onClick={handleLlmUpload}
+        disabled={globalLoading || !selectedFile}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '12px 24px',
+          fontSize: '16px',
+          fontWeight: '500',
+          border: 'none',
+          borderRadius: '6px',
+          cursor: (globalLoading || !selectedFile) ? 'not-allowed' : 'pointer',
+          transition: 'all 0.2s ease',
+          backgroundColor: globalLoading ? '#6c757d' : '#17a2b8',
+          color: 'white',
+          opacity: (globalLoading || !selectedFile) ? 0.6 : 1,
+          width: '100%',
+          justifyContent: 'center',
+          marginBottom: '15px'
+        }}
+      >
+        <span style={{ fontSize: '18px' }}>🤖</span>
+        {globalLoading && currentJobId ? 'Processing with LLM...' : 'Upload and Start LLM Process'}
+      </button>
 
+      {!selectedFile && (
+        <p style={{ 
+          fontSize: '14px', 
+          color: '#6c757d',
+          fontStyle: 'italic',
+          textAlign: 'center' 
+        }}>
+          Please select a file first to start LLM processing.
+        </p>
+      )}
 
-          {/* Job Status Display */}
-          {currentJobId && (
-            <div style={{ marginTop: '15px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-                <p style={{ margin: '0', fontSize: '14px', color: '#495057' }}>
-                  <strong>Job ID:</strong> {currentJobId}
-                </p>
-              </div>
-              {jobStatus && (
-                <div style={{ 
-                  padding: '10px', 
-                  backgroundColor: '#e7f3ff', 
-                  borderRadius: '4px',
-                  border: '1px solid #b8daff'
-                }}>
+      {/* Job Status Display */}
+      {currentJobId && localJobStatus && (
+        <div style={{ marginTop: '15px' }}>
+          <div style={{ 
+            padding: '10px', 
+            backgroundColor: '#e7f3ff', 
+            borderRadius: '4px',
+            border: '1px solid #b8daff'
+          }}>
+            <p style={{ margin: '5px 0', fontSize: '14px' }}>
+              <strong>Status:</strong> <span style={{ 
+                color: localJobStatus.status === 'completed' ? '#28a745' : 
+                      localJobStatus.status === 'error' ? '#dc3545' : '#007bff'
+              }}>
+                {localJobStatus.status}
+              </span>
+            </p>
+            {localJobStatus.progress && (
+              <>
+                {localJobStatus.progress.total_pages && (
                   <p style={{ margin: '5px 0', fontSize: '14px' }}>
-                    <strong>Status:</strong> <span style={{ 
-                      color: jobStatus.status === 'completed' ? '#28a745' : 
-                            jobStatus.status === 'error' ? '#dc3545' : '#007bff'
-                    }}>
-                      {jobStatus.status}
-                    </span>
+                    <strong>Total Pages:</strong> {localJobStatus.progress.total_pages}
                   </p>
-                  {jobStatus.progress && (
-                    <>
-                      {jobStatus.progress.total_pages && (
-                        <p style={{ margin: '5px 0', fontSize: '14px' }}>
-                          <strong>Total Pages:</strong> {jobStatus.progress.total_pages}
-                        </p>
-                      )}
-                      {jobStatus.progress.processed_pages !== undefined && (
-                        <p style={{ margin: '5px 0', fontSize: '14px' }}>
-                          <strong>Processed Pages:</strong> {jobStatus.progress.processed_pages}
-                        </p>
-                      )}
-                      {jobStatus.progress.percentage !== undefined && (
-                        <p style={{ margin: '5px 0', fontSize: '14px' }}>
-                          <strong>Progress:</strong> {jobStatus.progress.percentage.toFixed(1)}%
-                        </p>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
+                )}
+                {localJobStatus.progress.processed_pages !== undefined && (
+                  <p style={{ margin: '5px 0', fontSize: '14px' }}>
+                    <strong>Processed Pages:</strong> {localJobStatus.progress.processed_pages}
+                  </p>
+                )}
+                {localJobStatus.progress.percentage !== undefined && (
+                  <p style={{ margin: '5px 0', fontSize: '14px' }}>
+                    <strong>Progress:</strong> {localJobStatus.progress.percentage.toFixed(1)}%
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* LLM Results Display */}
+      {localLlmResults && (
+        <div style={{ marginTop: '15px' }}>
+          <h4 style={{ color: '#28a745', marginBottom: '10px' }}>LLM Analysis Complete!</h4>
+          
+          {localLlmResults.markdown_content && (
+            <div style={{ marginBottom: '15px', display: 'flex', gap: '10px' }}>
+              {/* <button 
+                onClick={() => setShowMarkdownDialog(true)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  backgroundColor: '#6f42c1',
+                  color: 'white'
+                }}
+              >
+                <span style={{ fontSize: '16px' }}>👁️</span>
+                Show Markdown Analysis
+              </button>
+               */}
+              <button 
+                onClick={downloadMarkdown}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  backgroundColor: '#28a745',
+                  color: 'white'
+                }}
+              >
+                <span style={{ fontSize: '16px' }}>📄</span>
+                Download Markdown Analysis
+              </button>
             </div>
           )}
 
-          {/* LLM Results Display */}
-          {llmResults && (
-            <div style={{ marginTop: '15px' }}>
-              <h4 style={{ color: '#28a745', marginBottom: '10px' }}>LLM Analysis Complete!</h4>
-              
-              {llmResults.markdown_content && (
-                <div style={{ marginBottom: '15px' }}>
-                  <button 
-                    onClick={downloadMarkdown}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: '8px 16px',
-                      fontSize: '14px',
-                      fontWeight: '500',
-                      border: 'none',
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      backgroundColor: '#28a745',
-                      color: 'white'
-                    }}
-                  >
-                    <span style={{ fontSize: '16px' }}>📄</span>
-                    Download Markdown Analysis
-                  </button>
-                </div>
-              )}
-
-              {llmResults.summary && (
-                <div style={{ 
-                  padding: '15px', 
-                  backgroundColor: '#f8f9fa', 
-                  borderRadius: '6px',
-                  border: '1px solid #dee2e6',
-                  marginTop: '10px'
-                }}>
-                  <h5 style={{ marginBottom: '10px', color: '#495057' }}>Document Summary:</h5>
-                  <p style={{ fontSize: '14px', lineHeight: '1.5', margin: 0 }}>
-                    {llmResults.summary}
-                  </p>
-                </div>
-              )}
+          {localLlmResults.summary && (
+            <div style={{ 
+              padding: '15px', 
+              backgroundColor: '#f8f9fa', 
+              borderRadius: '6px',
+              border: '1px solid #dee2e6',
+              marginTop: '10px'
+            }}>
+              <h5 style={{ marginBottom: '10px', color: '#495057' }}>Document Summary:</h5>
+              <p style={{ fontSize: '14px', lineHeight: '1.5', margin: 0 }}>
+                {localLlmResults.summary}
+              </p>
             </div>
           )}
         </div>
       )}
 
-      {/* Document History Section */}
-      <div style={{ margin: '20px 0' }}>
-        <button 
-          onClick={() => {
-            setShowHistory(!showHistory);
-            if (!showHistory) {
-              loadDocumentHistory();
-            }
-          }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: '8px 16px',
-            fontSize: '14px',
-            fontWeight: '500',
-            border: 'none',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease',
-            backgroundColor: '#6c757d',
-            color: 'white',
-            marginBottom: showHistory ? '15px' : '0'
-          }}
-        >
-          <span style={{ fontSize: '16px' }}>📋</span>
-          {showHistory ? 'Hide Document History' : 'Show Document History'}
-        </button>
-
-        {showHistory && (
-          <div style={{
-            padding: '15px',
-            backgroundColor: '#f8f9fa',
-            borderRadius: '6px',
-            border: '1px solid #dee2e6'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-              <div>
-                <h4 style={{ margin: 0, color: '#495057' }}>Document Processing History</h4>
-                {lastHistoryUpdate && (
-                  <p style={{ 
-                    margin: '2px 0 0 0', 
-                    fontSize: '11px', 
-                    color: '#6c757d',
-                    fontStyle: 'italic'
-                  }}>
-                    Last updated: {lastHistoryUpdate.toLocaleTimeString()}
-                  </p>
-                )}
-              </div>
-              {documentHistory.length > 0 && (
-                <button 
-                  onClick={deleteAllDocuments}
-                  style={{
-                    padding: '6px 12px',
-                    fontSize: '12px',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    backgroundColor: '#dc3545',
-                    color: 'white'
-                  }}
-                >
-                  Delete All
-                </button>
-              )}
-            </div>
-            
-            {documentHistory.length === 0 ? (
-              <p style={{ color: '#6c757d', fontStyle: 'italic' }}>No documents processed yet.</p>
-            ) : (
-              <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                {documentHistory.map((doc, index) => (
-                  <div key={index} style={{
-                    padding: '10px',
-                    marginBottom: '10px',
-                    backgroundColor: 'white',
-                    borderRadius: '4px',
-                    border: '1px solid #dee2e6'
-                  }}>
-                    <p style={{ margin: '5px 0', fontSize: '14px' }}>
-                      <strong>File:</strong> {doc.filename}
-                    </p>
-                    <p style={{ margin: '5px 0', fontSize: '14px' }}>
-                      <strong>Status:</strong> <span style={{ 
-                        color: doc.status === 'completed' ? '#28a745' : 
-                              doc.status === 'error' ? '#dc3545' : '#007bff'
-                      }}>
-                        {doc.status}
-                      </span>
-                    </p>
-                    <p style={{ margin: '5px 0', fontSize: '12px', color: '#6c757d' }}>
-                      {new Date(doc.created_at).toLocaleString()}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
 
+// Make MarkdownDialog accessible as a static property of LLMProcessor
+LLMProcessor.MarkdownDialog = MarkdownDialog;
 export default LLMProcessor;

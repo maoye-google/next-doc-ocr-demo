@@ -110,6 +110,7 @@ class OCRResponse(BaseModel):
     success: bool = Field(..., description="Boolean indicating success")
     message: str = Field(..., description="Status or error message")
     results: Optional[List[PageResult]] = Field(None, description="OCR results per page")
+    job_id: Optional[str] = Field(None, description="Job ID for tracking")
 
 class ManualOCRRequest(BaseModel):
     page_data: str = Field(..., description="Base64 encoded image data")
@@ -250,6 +251,46 @@ def create_job_record(job_id: str, filename: str, file_type: str, total_pages: i
         logger.info(f"Created job record: {job_id}")
     
     return job_record
+
+def create_ocr_job_record(job_id: str, filename: str, file_type: str, total_pages: int) -> dict:
+    """Create a new OCR job record in MongoDB"""
+    job_record = {
+        "job_id": job_id,
+        "file_name": filename,
+        "file_type": file_type,
+        "total_pages": total_pages,
+        "processed_pages": total_pages,  # OCR completes synchronously
+        "llm_model": None,  # No LLM model for OCR
+        "processing_type": "ocr",
+        "status": "processing",
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow(),
+        "completed_at": None,  # Will be set when OCR completes
+        "analysis_duration_seconds": None
+    }
+    
+    if mongo_db is not None:
+        mongo_db.jobs.insert_one(job_record)
+        logger.info(f"Created OCR job record: {job_id}")
+    
+    return job_record
+
+def complete_ocr_job_record(job_id: str, duration_seconds: int):
+    """Mark OCR job as completed in MongoDB"""
+    if mongo_db is not None:
+        completed_at = datetime.utcnow()
+        mongo_db.jobs.update_one(
+            {"job_id": job_id},
+            {
+                "$set": {
+                    "status": "completed",
+                    "completed_at": completed_at,
+                    "updated_at": completed_at,
+                    "analysis_duration_seconds": duration_seconds
+                }
+            }
+        )
+        logger.info(f"Completed OCR job record: {job_id}")
 
 def publish_page_to_kafka(job_id: str, page_number: int, image_data: str, llm_model: str):
     """Publish page image to Kafka for processing"""
@@ -660,7 +701,7 @@ async def ocr_process_file(file: UploadFile = File(...)):
     if not ocr_instance:
         logger.error("OCR endpoint called but OCR instance is not available.")
         print("=== OCR INSTANCE IS NONE ===")
-        return OCRResponse(success=False, message="OCR service is not initialized or failed to load.", results=None)
+        return OCRResponse(success=False, message="OCR service is not initialized or failed to load.", results=None, job_id=None)
 
     logger.info(f"Received file: {file.filename}, content type: {file.content_type}")
 
@@ -668,6 +709,13 @@ async def ocr_process_file(file: UploadFile = File(...)):
     if not file.content_type.startswith("image/") and file.content_type != "application/pdf":
         logger.warning(f"Invalid file type uploaded: {file.content_type}")
         raise HTTPException(status_code=400, detail=f"Invalid file type: {file.content_type}. Please upload an image or PDF.")
+
+    # Generate job ID for OCR tracking
+    job_id = str(uuid.uuid4())
+    logger.info(f"=== GENERATED OCR JOB ID: {job_id} ===")
+    
+    # Record start time for duration calculation
+    start_time = datetime.utcnow()
 
     try:
         contents = await file.read()
@@ -678,6 +726,12 @@ async def ocr_process_file(file: UploadFile = File(...)):
         if file.content_type.startswith("image/"):
             logger.info(f"Processing uploaded image: {file.filename}")
             print(f"=== About to call process_image_with_ocr for {file.filename} ===")
+            
+            # Create OCR job record for single image
+            total_pages = 1
+            create_ocr_job_record(job_id, file.filename, "image", total_pages)
+            logger.info(f"=== CREATED OCR JOB RECORD FOR IMAGE: {job_id} ===")
+            
             detections = process_image_with_ocr(contents)
             print(f"=== process_image_with_ocr returned {len(detections)} detections ===")
             logger.info(f"Got {len(detections)} detections from OCR")
@@ -694,7 +748,12 @@ async def ocr_process_file(file: UploadFile = File(...)):
             logger.info(f"PDF converted to {len(image_bytes_list)} images")
             if not image_bytes_list:
                 logger.warning(f"PDF {file.filename} resulted in no images after conversion.")
-                return OCRResponse(success=False, message="PDF processing failed to produce images.", results=None)
+                return OCRResponse(success=False, message="PDF processing failed to produce images.", results=None, job_id=None)
+
+            # Create OCR job record for PDF
+            total_pages = len(image_bytes_list)
+            create_ocr_job_record(job_id, file.filename, "pdf", total_pages)
+            logger.info(f"=== CREATED OCR JOB RECORD FOR PDF: {job_id} with {total_pages} pages ===")
 
             for i, img_bytes in enumerate(image_bytes_list):
                 logger.info(f"Performing OCR on page {i+1}/{len(image_bytes_list)} of PDF {file.filename}")
@@ -703,8 +762,14 @@ async def ocr_process_file(file: UploadFile = File(...)):
                 logger.info(f"Completed OCR for page {i+1}, found {len(detections)} text regions")
             message = f"PDF processed successfully, {len(image_bytes_list)} pages found."
         
+        # Calculate duration and complete the OCR job record
+        end_time = datetime.utcnow()
+        duration_seconds = int((end_time - start_time).total_seconds())
+        complete_ocr_job_record(job_id, duration_seconds)
+        logger.info(f"=== COMPLETED OCR JOB RECORD: {job_id} in {duration_seconds} seconds ===")
+        
         logger.info(f"Successfully processed {file.filename}. Pages: {len(all_page_results)}")
-        return OCRResponse(success=True, message=message, results=all_page_results)
+        return OCRResponse(success=True, message=message, results=all_page_results, job_id=job_id)
 
     except HTTPException as he:
         # Re-raise HTTPExceptions to be handled by FastAPI
@@ -712,7 +777,16 @@ async def ocr_process_file(file: UploadFile = File(...)):
         raise he 
     except Exception as e:
         logger.error(f"An unexpected error occurred while processing {file.filename}: {e}", exc_info=True)
-        return OCRResponse(success=False, message=f"An unexpected error occurred: {str(e)}", results=None)
+        # Try to mark job as failed if it was created
+        try:
+            if 'job_id' in locals():
+                mongo_db.jobs.update_one(
+                    {"job_id": job_id},
+                    {"$set": {"status": "error", "updated_at": datetime.utcnow(), "error_message": str(e)}}
+                )
+        except:
+            pass  # Don't let job update failure mask the original error
+        return OCRResponse(success=False, message=f"An unexpected error occurred: {str(e)}", results=None, job_id=None)
 
 @app.post("/api/ocr/manual/", summary="Process manually selected area for OCR", response_model=ManualOCRResponse)
 async def ocr_manual_area(request: ManualOCRRequest):

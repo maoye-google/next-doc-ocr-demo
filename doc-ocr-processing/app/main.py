@@ -272,17 +272,26 @@ def aggregate_document_with_vertex_ai(page_results: List[Dict], model: str) -> D
     try:
         logger.info(f"Aggregating document with model: {model}")
         
-        # Combine all page texts
-        all_text = "\n\n".join([page.get("extracted_text", "") for page in page_results])
+        # Sort page_results by page_number to ensure correct order
+        sorted_page_results = sorted(page_results, key=lambda x: x.get("page_number", 0))
+        
+        # Combine all page texts with page number headers
+        page_texts_with_headers = []
+        for page in sorted_page_results:
+            page_number = page.get("page_number", "Unknown")
+            extracted_text = page.get("extracted_text", "")
+            page_texts_with_headers.append(f"### Page {page_number}\n{extracted_text}")
+        
+        all_text = "\n\n---\n\n".join(page_texts_with_headers) # Use --- for a thematic break between pages
         
         # Simulate processing time
         import time
         time.sleep(3)
         
-        # Return mock aggregation result
+        overview = f"Document processed with {model}. Contains {len(page_results)} pages."
         record = {
-            "document_overview": f"Document processed with {model}. Contains {len(page_results)} pages.",
-            "markdown_content": f"# Document Analysis\n\n## Summary\n{all_text[:50000]}...\n\n## Pages: {len(page_results)}",
+            "document_overview": overview,
+            "markdown_content": f"## Summary\n {overview} \n\n---\n\n## Extracted Texts\n{all_text[:50000]}...\n\n",
             "processing_model": model,
             "timestamp": datetime.utcnow().isoformat()
         }

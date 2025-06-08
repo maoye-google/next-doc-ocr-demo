@@ -2,9 +2,12 @@
 import React, { useState, useRef } from 'react';
 import axios from 'axios';
 import FileUploader from './components/FileUploader';
-import DocumentViewer from './components/DocumentViewer';
+import OCRProcessor from './components/OCRProcessor';
 import LLMProcessor from './components/LLMProcessor';
-import './App.css'; // Specific styles for App component
+import JobHistory from './components/JobHistory';
+import DocumentViewer from './components/DocumentViewer';
+import GlobalStatusBar from './components/GlobalStatusBar';
+import './App.css';
 
 // Draggable Text Dialog Component
 function DraggableTextDialog({ ocrResults, manualOcrResults = [], highlightedDetectionIndex, onClose, onTextClick, textItemStates, onTextItemToggle, onFieldNameChange }) {
@@ -15,7 +18,7 @@ function DraggableTextDialog({ ocrResults, manualOcrResults = [], highlightedDet
 
   const handleMouseDown = (e) => {
     if (e.target.closest('.text-dialog-content') || e.target.closest('.close-button')) {
-      return; // Don't start dragging if clicking on content or close button
+      return;
     }
     
     setIsDragging(true);
@@ -217,34 +220,54 @@ function DraggableTextDialog({ ocrResults, manualOcrResults = [], highlightedDet
 }
 
 function App() {
+  // File management
   const [selectedFile, setSelectedFile] = useState(null);
+  const [fileUrl, setFileUrl] = useState(null);
+  const [fileType, setFileType] = useState('');
+  
+  // Job history refresh
+  const jobHistoryRef = useRef(null);
+  
+  // Unified job status management
+  const [currentJobId, setCurrentJobId] = useState(null);
+  const [jobType, setJobType] = useState(null); // 'ocr' or 'llm'
+  const [jobStatus, setJobStatus] = useState(null); // 'idle', 'processing', 'completed', 'error'
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const [jobProgress, setJobProgress] = useState(null);
+  
+  // Results
   const [ocrResults, setOcrResults] = useState(null);
+  const [llmResults, setLlmResults] = useState(null);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [fileUrl, setFileUrl] = useState(null); // For displaying the uploaded image/PDF
-  const [fileType, setFileType] = useState(''); // 'image' or 'pdf'
-  const [showOcrResults, setShowOcrResults] = useState(true); // Toggle for OCR result visibility
+  
+  // UI states
+  const [showOcrResults, setShowOcrResults] = useState(true);
   const [showTextDialog, setShowTextDialog] = useState(false);
   const [highlightedDetectionIndex, setHighlightedDetectionIndex] = useState(null);
   const [showOnlyHighlighted, setShowOnlyHighlighted] = useState(false);
   const [isManualSelectionMode, setIsManualSelectionMode] = useState(false);
   const [manualOcrResults, setManualOcrResults] = useState([]);
-  const [textItemStates, setTextItemStates] = useState({}); // Store visibility and field names for each text item
-  const [currentJobId, setCurrentJobId] = useState(null); // Track current LLM job ID
-  const [globalLoading, setGlobalLoading] = useState(false); // Global loading state controlled by polling
+  const [textItemStates, setTextItemStates] = useState({});
+  const [showArchivedLlmDialog, setShowArchivedLlmDialog] = useState(false);
 
   const handleFileSelect = (file) => {
     setSelectedFile(file);
     setOcrResults(null);
+    setLlmResults(null);
     setError('');
     setFileUrl(null);
     setFileType('');
     setManualOcrResults([]);
     setIsManualSelectionMode(false);
     setTextItemStates({});
-    setCurrentJobId(null); // Reset current job ID when selecting new file
+    setCurrentJobId(null);
+    setJobType(null);
+    setJobStatus(null);
+    setGlobalLoading(false);
+    setJobProgress(null);
+    setShowArchivedLlmDialog(false);
+    
     if (file) {
-      // Create a URL for the selected file to display it
       const url = URL.createObjectURL(file);
       setFileUrl(url);
       if (file.type.startsWith('image/')) {
@@ -259,61 +282,12 @@ function App() {
     }
   };
 
-  const handleUpload = async () => {
-    if (!selectedFile) {
-      setError('Please select a file first.');
-      return;
-    }
-    if (fileType === '' && !selectedFile.type.startsWith('image/') && selectedFile.type !== 'application/pdf') {
-        setError('Unsupported file type. Please upload an image or PDF.');
-        return;
-    }
-
-    setLoading(true);
-    setError('');
-    setOcrResults(null);
-
-    const formData = new FormData();
-    formData.append('file', selectedFile);
-
-    try {
-      const response = await axios.post(`api/ocr/process/`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        timeout: 300000, // 5 minutes timeout for large PDFs
-      });
-      
-      console.log("Backend Response:", response.data);
-
-      if (response.data.success) {
-        setOcrResults(response.data.results);
-        setError(''); // Clear any previous errors
-      } else {
-        setError(response.data.message || 'OCR processing failed.');
-        setOcrResults(null);
-      }
-    } catch (err) {
-      console.error("Upload Error:", err);
-      let errorMsg = 'An error occurred during upload.';
-      if (err.response) {
-        errorMsg = err.response.data.detail || err.response.data.message || `Server error: ${err.response.status}`;
-      } else if (err.request) {
-        errorMsg = 'No response from server. Check network or backend status.';
-      }
-      setError(errorMsg);
-      setOcrResults(null);
-    }
-    setLoading(false);
-  };
-
-
   const handleTextItemToggle = (globalIndex) => {
     setTextItemStates(prev => ({
       ...prev,
       [globalIndex]: {
         ...prev[globalIndex],
-        visible: !(prev[globalIndex]?.visible ?? true) // Default to visible if not set
+        visible: !(prev[globalIndex]?.visible ?? true)
       }
     }));
   };
@@ -324,29 +298,33 @@ function App() {
       [globalIndex]: {
         ...prev[globalIndex],
         fieldName: fieldName,
-        visible: prev[globalIndex]?.visible ?? true // Default to visible if not set
+        visible: prev[globalIndex]?.visible ?? true
       }
     }));
   };
 
   const isTextItemVisible = (globalIndex) => {
-    return textItemStates[globalIndex]?.visible ?? true; // Default to visible
+    return textItemStates[globalIndex]?.visible ?? true;
   };
 
   const getTextItemFieldName = (globalIndex) => {
     return textItemStates[globalIndex]?.fieldName ?? '';
   };
 
+  const refreshJobHistory = () => {
+    if (jobHistoryRef.current && jobHistoryRef.current.refreshHistory) {
+      console.log('🔄 App: Manually refreshing job history');
+      jobHistoryRef.current.refreshHistory();
+    }
+  };
+
   const handleManualSelection = async (selection) => {
     try {
-      setLoading(true);
+      setGlobalLoading(true);
       
-      // Get the canvas image data as base64
       const canvas = selection.canvas;
       const imageDataUrl = canvas.toDataURL('image/png');
       
-      // For manual selection, use the coordinates as-is from the canvas
-      // The backend will handle coordinate scaling based on the actual image data
       const adjustedCoords = {
         startX: selection.startX,
         startY: selection.startY,
@@ -384,7 +362,7 @@ function App() {
       }
       setError(errorMsg);
     }
-    setLoading(false);
+    setGlobalLoading(false);
   };
 
   const downloadJsonResults = () => {
@@ -393,7 +371,6 @@ function App() {
       return;
     }
     try {
-      // Filter automatic OCR results to only include visible items
       const filteredAutomaticOcr = (ocrResults || []).map(page => ({
         ...page,
         detections: page.detections.map((detection, detectionIndex) => {
@@ -406,9 +383,8 @@ function App() {
             ...(fieldName && { field_name: fieldName })
           };
         }).filter(item => item.visible).map(({ visible, globalIndex, ...detection }) => detection)
-      })).filter(page => page.detections.length > 0); // Remove pages with no visible detections
+      })).filter(page => page.detections.length > 0);
 
-      // Filter manual OCR results to only include visible items
       const filteredManualOcr = manualOcrResults.map((detection, detectionIndex) => {
         const globalIndex = -1000 - detectionIndex;
         const fieldName = getTextItemFieldName(globalIndex);
@@ -450,219 +426,282 @@ function App() {
     };
   }, [fileUrl]);
 
-
   return (
     <div className="App">
-      <header className="App-header">
-        <h1>OnPrem Document AI Demo</h1>
-      </header>
-      <div className="container">
-        <FileUploader 
-          onFileSelect={handleFileSelect} 
-          onUpload={handleUpload} 
-          loading={loading} 
-          selectedFile={selectedFile}
-        />
-
-
-        {/* LLM Processing Component */}
-        <LLMProcessor 
-          selectedFile={selectedFile}
-          loading={loading}
-          setLoading={setLoading}
-          setError={setError}
-          currentJobId={currentJobId}
-          setCurrentJobId={setCurrentJobId}
-          globalLoading={globalLoading}
-          setGlobalLoading={setGlobalLoading}
-        />
-
-        {error && <p className="error-message">Error: {error}</p>}
+      {/* Global Status Bar */}
+      <GlobalStatusBar 
+        globalLoading={globalLoading}
+        jobType={jobType}
+        currentJobId={currentJobId}
+        jobProgress={jobProgress}
+      />
+      
+      {/* Add top padding when status bar is visible */}
+      <div style={{ paddingTop: globalLoading ? '60px' : '0', transition: 'padding-top 0.3s ease' }}>
+        <header className="App-header">
+          <h1>OnPrem Document AI Demo</h1>
+        </header>
         
-        {globalLoading && (
-          <div className="loading-message">
-            <p>Processing {fileType === 'pdf' ? 'PDF document' : 'image'}, please wait...</p>
-            {fileType === 'pdf' && (
-              <p style={{ fontSize: '0.9em', color: '#666' }}>
-                PDF processing may take several minutes depending on the number of pages.
-              </p>
-            )}
-          </div>
-        )}
+        <div className="container">
+          {/* Widget 1: File Uploader */}
+          <FileUploader 
+            onFileSelect={handleFileSelect} 
+            selectedFile={selectedFile}
+          />
 
-        {(ocrResults && ocrResults.length > 0) || manualOcrResults.length > 0 ? (
-          <div className="results-actions" style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '10px',
-            alignItems: 'center',
-            justifyContent: 'center',
-            margin: '20px 0',
-            padding: '15px',
-            backgroundColor: '#f8f9fa',
-            borderRadius: '8px',
-            border: '1px solid #dee2e6'
-          }}>
-            <button 
-              onClick={() => setShowOcrResults(!showOcrResults)}
-              disabled={globalLoading}
-              style={{ 
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 16px',
-                fontSize: '14px',
-                fontWeight: '500',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: globalLoading ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s ease',
-                backgroundColor: showOcrResults ? '#007bff' : '#6c757d',
-                color: 'white',
-                opacity: globalLoading ? 0.6 : 1,
-                width: '200px',
-                height: '48px',
-                justifyContent: 'center'
-              }}
-            >
-              <span style={{ fontSize: '16px' }}>{showOcrResults ? '🙈' : '👁️'}</span>
-              {showOcrResults ? 'Hide OCR Results' : 'Show OCR Results'}
-            </button>
-            <button 
-              onClick={() => setIsManualSelectionMode(!isManualSelectionMode)}
-              disabled={globalLoading}
-              style={{ 
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 16px',
-                fontSize: '14px',
-                fontWeight: '500',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s ease',
-                backgroundColor: isManualSelectionMode ? '#dc3545' : '#fd7e14',
-                color: 'white',
-                opacity: loading ? 0.6 : 1,
-                width: '200px',
-                height: '48px',
-                justifyContent: 'center'
-              }}
-            >
-              <span style={{ fontSize: '16px' }}>{isManualSelectionMode ? '❌' : '🎯'}</span>
-              {isManualSelectionMode ? 'Exit Manual Selection' : 'Manual Selection Mode'}
-            </button>
-            <button 
-              onClick={() => {
-                setShowTextDialog(true);
+          {/* Widget 2: OCR Processor */}
+          <OCRProcessor 
+            selectedFile={selectedFile}
+            globalLoading={globalLoading}
+            setGlobalLoading={setGlobalLoading}
+            setCurrentJobId={setCurrentJobId}
+            jobType={jobType}
+            setJobType={setJobType}
+            setJobStatus={setJobStatus}
+            setOcrResults={setOcrResults}
+            setError={setError}
+            onJobComplete={refreshJobHistory}
+          />
+
+          {/* Widget 3: LLM Processor */}
+          <LLMProcessor 
+            selectedFile={selectedFile}
+            globalLoading={globalLoading}
+            setGlobalLoading={setGlobalLoading}
+            currentJobId={currentJobId}
+            setCurrentJobId={setCurrentJobId}
+            setJobType={setJobType}
+            setJobStatus={setJobStatus}
+            setLlmResults={setLlmResults}
+            setError={setError}
+            setJobProgress={setJobProgress}
+          />
+
+          {/* Widget 4: Job History */}
+          <JobHistory 
+            ref={jobHistoryRef}
+            currentJobId={currentJobId}
+            jobStatus={jobStatus}
+            onJobSelect={(job, results) => {
+              console.log('App: Job selected from history:', job, results);
+              setCurrentJobId(job.job_id);
+              setJobStatus(job.status);
+              // Determine job type (simplified, might need more robust logic from job data)
+              const selectedJobType = (job.processing_type === 'llm' || job.llm_model) ? 'llm' : 'ocr';
+              setJobType(selectedJobType);
+
+              if (selectedJobType === 'llm' && results && results.results && results.results.markdown_content) {
+                setLlmResults(results.results); // Set the LLM results in App's state
+                setShowArchivedLlmDialog(true); // Trigger dialog display
+                setShowTextDialog(false); // Ensure other dialogs are closed
+              } else {
+                setLlmResults(null);
+                setShowArchivedLlmDialog(false);
+              }
+              // If it's an OCR job, you might want to set ocrResults similarly
+              if (selectedJobType === 'ocr' && results && results.results) {
+                setOcrResults(results.results);
+              } else if (selectedJobType !== 'llm') { // Clear OCR results if not an OCR job
+                setOcrResults(null);
+              }
+
+            }}
+            onJobDelete={(jobId) => {
+              if (jobId === currentJobId) {
+                setCurrentJobId(null);
+                setJobStatus(null);
+              }
+            }}
+          />
+
+          {error && <p className="error-message">Error: {error}</p>}
+
+          {(ocrResults && ocrResults.length > 0) || manualOcrResults.length > 0 ? (
+            <div className="results-actions" style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '10px',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '20px 0',
+              padding: '15px',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '8px',
+              border: '1px solid #dee2e6'
+            }}>
+              <button 
+                onClick={() => setShowOcrResults(!showOcrResults)}
+                disabled={globalLoading}
+                style={{ 
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: globalLoading ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  backgroundColor: showOcrResults ? '#007bff' : '#6c757d',
+                  color: 'white',
+                  opacity: globalLoading ? 0.6 : 1,
+                  width: '200px',
+                  height: '48px',
+                  justifyContent: 'center'
+                }}
+              >
+                <span style={{ fontSize: '16px' }}>{showOcrResults ? '🙈' : '👁️'}</span>
+                {showOcrResults ? 'Hide OCR Results' : 'Show OCR Results'}
+              </button>
+              <button 
+                onClick={() => setIsManualSelectionMode(!isManualSelectionMode)}
+                disabled={globalLoading}
+                style={{ 
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: globalLoading ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  backgroundColor: isManualSelectionMode ? '#dc3545' : '#fd7e14',
+                  color: 'white',
+                  opacity: globalLoading ? 0.6 : 1,
+                  width: '200px',
+                  height: '48px',
+                  justifyContent: 'center'
+                }}
+              >
+                <span style={{ fontSize: '16px' }}>{isManualSelectionMode ? '❌' : '🎯'}</span>
+                {isManualSelectionMode ? 'Exit Manual Selection' : 'Manual Selection Mode'}
+              </button>
+              <button 
+                onClick={() => {
+                  setShowTextDialog(true);
+                  setShowOnlyHighlighted(false);
+                  setHighlightedDetectionIndex(null);
+                }}
+                disabled={globalLoading}
+                style={{ 
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: globalLoading ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  backgroundColor: '#28a745',
+                  color: 'white',
+                  opacity: globalLoading ? 0.6 : 1,
+                  width: '200px',
+                  height: '48px',
+                  justifyContent: 'center'
+                }}
+              >
+                <span style={{ fontSize: '16px' }}>📝</span>
+                Select Necessary Fields
+              </button>
+              <button 
+                onClick={downloadJsonResults} 
+                disabled={globalLoading || (!ocrResults && manualOcrResults.length === 0)}
+                style={{ 
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 16px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: (globalLoading || (!ocrResults && manualOcrResults.length === 0)) ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  backgroundColor: '#6f42c1',
+                  color: 'white',
+                  opacity: (globalLoading || (!ocrResults && manualOcrResults.length === 0)) ? 0.6 : 1,
+                  width: '200px',
+                  height: '48px',
+                  justifyContent: 'center'
+                }}
+              >
+                <span style={{ fontSize: '16px' }}>⬇️</span>
+                Result Download (JSON)
+              </button>
+            </div>
+          ) : null}
+
+          {fileUrl && (
+            <DocumentViewer 
+              fileUrl={fileUrl} 
+              fileType={fileType} 
+              ocrResults={ocrResults}
+              showOcrResults={showOcrResults}
+              highlightedDetectionIndex={highlightedDetectionIndex}
+              showOnlyHighlighted={showOnlyHighlighted}
+              showTextDialog={showTextDialog}
+              isManualSelectionMode={isManualSelectionMode}
+              onManualSelection={handleManualSelection}
+              manualOcrResults={manualOcrResults}
+              isTextItemVisible={isTextItemVisible}
+            />
+          )}
+
+          {isManualSelectionMode && (
+            <div className="manual-selection-info" style={{
+              marginTop: '10px',
+              padding: '10px',
+              backgroundColor: '#fff3cd',
+              border: '1px solid #ffeaa7',
+              borderRadius: '5px',
+              fontSize: '14px'
+            }}>
+              <strong>Manual Selection Mode Active:</strong> Click and drag on the document to select an area for additional OCR processing.
+              {manualOcrResults.length > 0 && (
+                <div style={{ marginTop: '5px' }}>
+                  Found {manualOcrResults.length} additional text region(s) from manual selections.
+                </div>
+              )}
+            </div>
+          )}
+
+          {showTextDialog && (ocrResults || manualOcrResults.length > 0) && (
+            <DraggableTextDialog 
+              ocrResults={ocrResults || []}
+              manualOcrResults={manualOcrResults}
+              highlightedDetectionIndex={highlightedDetectionIndex}
+              textItemStates={textItemStates}
+              onTextItemToggle={handleTextItemToggle}
+              onFieldNameChange={handleFieldNameChange}
+              onClose={() => {
+                setShowTextDialog(false);
                 setShowOnlyHighlighted(false);
                 setHighlightedDetectionIndex(null);
               }}
-              disabled={loading}
-              style={{ 
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 16px',
-                fontSize: '14px',
-                fontWeight: '500',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s ease',
-                backgroundColor: '#28a745',
-                color: 'white',
-                opacity: loading ? 0.6 : 1,
-                width: '200px',
-                height: '48px',
-                justifyContent: 'center'
+              onTextClick={(globalIndex) => {
+                setHighlightedDetectionIndex(globalIndex);
+                setShowOnlyHighlighted(true);
               }}
-            >
-              <span style={{ fontSize: '16px' }}>📝</span>
-              Select Necessary Fields
-            </button>
-            <button 
-              onClick={downloadJsonResults} 
-              disabled={globalLoading || (!ocrResults && manualOcrResults.length === 0)}
-              style={{ 
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 16px',
-                fontSize: '14px',
-                fontWeight: '500',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: (globalLoading || (!ocrResults && manualOcrResults.length === 0)) ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s ease',
-                backgroundColor: '#6f42c1',
-                color: 'white',
-                opacity: (globalLoading || (!ocrResults && manualOcrResults.length === 0)) ? 0.6 : 1,
-                width: '200px',
-                height: '48px',
-                justifyContent: 'center'
+            />
+          )}
+
+          {/* Markdown Dialog for LLM results from Job History or active processing */}
+          { (showArchivedLlmDialog || (jobType === 'llm' && llmResults?.markdown_content)) && llmResults?.markdown_content && (
+            <LLMProcessor.MarkdownDialog // Assuming MarkdownDialog is exported or accessible
+              markdownContent={llmResults.markdown_content}
+              onClose={() => { 
+                setShowArchivedLlmDialog(false); 
+                setLlmResults(null); // Clear LLM results to ensure dialog closes
               }}
-            >
-              <span style={{ fontSize: '16px' }}>⬇️</span>
-              Result Download (JSON)
-            </button>
-          </div>
-        ) : null}
+            />
+          )}
 
-        {fileUrl && (
-          <DocumentViewer 
-            fileUrl={fileUrl} 
-            fileType={fileType} 
-            ocrResults={ocrResults}
-            showOcrResults={showOcrResults}
-            highlightedDetectionIndex={highlightedDetectionIndex}
-            showOnlyHighlighted={showOnlyHighlighted}
-            showTextDialog={showTextDialog}
-            isManualSelectionMode={isManualSelectionMode}
-            onManualSelection={handleManualSelection}
-            manualOcrResults={manualOcrResults}
-            isTextItemVisible={isTextItemVisible}
-          />
-        )}
-
-        {isManualSelectionMode && (
-          <div className="manual-selection-info" style={{
-            marginTop: '10px',
-            padding: '10px',
-            backgroundColor: '#fff3cd',
-            border: '1px solid #ffeaa7',
-            borderRadius: '5px',
-            fontSize: '14px'
-          }}>
-            <strong>Manual Selection Mode Active:</strong> Click and drag on the document to select an area for additional OCR processing.
-            {manualOcrResults.length > 0 && (
-              <div style={{ marginTop: '5px' }}>
-                Found {manualOcrResults.length} additional text region(s) from manual selections.
-              </div>
-            )}
-          </div>
-        )}
-
-        {showTextDialog && (ocrResults || manualOcrResults.length > 0) && (
-          <DraggableTextDialog 
-            ocrResults={ocrResults || []}
-            manualOcrResults={manualOcrResults}
-            highlightedDetectionIndex={highlightedDetectionIndex}
-            textItemStates={textItemStates}
-            onTextItemToggle={handleTextItemToggle}
-            onFieldNameChange={handleFieldNameChange}
-            onClose={() => {
-              setShowTextDialog(false);
-              setShowOnlyHighlighted(false);
-              setHighlightedDetectionIndex(null);
-            }}
-            onTextClick={(globalIndex) => {
-              setHighlightedDetectionIndex(globalIndex);
-              setShowOnlyHighlighted(true);
-            }}
-          />
-        )}
+        </div>
       </div>
     </div>
   );
