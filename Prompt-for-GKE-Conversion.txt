@@ -1,0 +1,32 @@
+Please do the code refacotry to convert my project from Docker style to Google Kubernetes Engine Style.
+Please refer to "docker-compose.yml" about the service launch parameters and dependencies.
+
+Also, please check the following additional requirements:
+- Create a dedicated service account to call Vertex AI Services. The SA name should be "doc-ocr-vertex-ai-sa@$PROJECT_ID.iam.gserviceaccount.com",and make sure the new SA is only generated in the first run. And for other runs, please rotate the json key file. Do not forget to clean up the old keys.
+- Create a new namespe in my target GKE cluster (next-demo-cluster in us-central1 region) for the following resource deployment,the name should be "doc-ocr"
+- Do not hard code the cluster name or region. These values should come from environment value.
+- Create a new k8s folder, and store all necessary k8s yaml deployment files should be created under it
+- Create a GKE secret to store the above SA's json key.
+- Create a new Pod to run mongo db (image: mongo:latest). Service name should be "mongodb", and port should be 27017. Please choose proper kubenetes resource type for Mongo DB.
+- Create a new Pod to run zoo keeper (confluentinc/cp-zookeeper:7.3.0). Service name should be "zookeeper", and the client port is 2181, and tick_time is 2000 by default. Please choose proper kubenetes resource type for Zoo Keeper.
+- Create a new Pod to run kafka (image: confluentinc/cp-kafka:7.3.0). Service name should be "kafka", and ports are 9092 and 29092. Please choose proper kubenetes resource type for Kafka.
+- This is a POC project and do not have much traffic. So Please keep the pod instance number and spec as minimum as possible for kafka, mongodb and zookeeper.
+- Create a new Pod to run doc-ocr-processing. It is a background service so do not need external IP. Please check the docker-compose.yml to understand the necessary environment parameters. It will use the newly created Service Account to call the GCP Vertex AI, so it needs access to the newly created SA.
+- Create a new Pod to run doc-ocr-backend. It is a background service so do not need external IP. Please check the docker-compose.yml to understand the necessary environment parameters.
+- Create a new Pod to run doc-ocr-frontend. It is a web service frontend, and needs to handle ingress traffic. Please check the docker-compose.yml to understand the necessary environment parameters.
+- Create a Ingress resource to forward all ingress traffic (starting with "/api") to doc-ocr-backend, and other traffic to doc-ocr-frontend pod. This application needs HTTPS support, so please also create a Google managed certificate (Domain = doc-ocr.maoye.demo.altostrat.com) for this ingress. 
+- This ingress should be using static IP (name=doc-ocr-ip), so please first create a static ip using this name.
+- Add the target domain (doc-ocr.maoye.demo.altostrat.com) to 'server.allowedHosts' in vite.config.js (doc-ocr-frontend)
+- Create necessary yaml file for deployment to GKE. Use environment parameter to specify GCP PROJECT_ID, GKE_CLUSTER_NAME.
+- Create a cloudbuild.yaml file to automate the deployment. The process should include container image build, upload image to GCP container repository, deploy the service to the target GKE cluster. Please remember to deploy not only the doc-ocr-* applications, but also infrastructure like mongodb, kafka and zookeeper.
+- Please do not forget to grant necessary roles to the default service account used by Cloud Build.
+- Create a GKE-Deployment-README.md file to explain how to deploy this service to GKE automatically.
+
+
+The following steps should also be automated:
+(1) Permission grant to the default cloud build service account 
+(2) Static IP creation (if not exist yet) 
+(3) Push the built images (doc-ocr-frontend, doc-ocr-backend, doc-ocr-processing) to default google artifact registory
+
+Please prepare a cloudbuild.yaml file for Cloud Build to use. Each step should have its own ID, using the same format (i.e. "Step-1 : create service account")
+After the deployment is done, please add a new step inside cloudbuild.yaml to enforce pods to restart.

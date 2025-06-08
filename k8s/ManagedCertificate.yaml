@@ -1,0 +1,8 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: doc-ocr-certificate
+  namespace: doc-ocr
+spec:
+  domains:
+    - doc-ocr.maoye.demo.altostrat.com

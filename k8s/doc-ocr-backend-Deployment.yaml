@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doc-ocr-backend
+  namespace: doc-ocr
+  labels:
+    app: doc-ocr-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: doc-ocr-backend
+  template:
+    metadata:
+      labels:
+        app: doc-ocr-backend
+    spec:
+      containers:
+      - name: doc-ocr-backend
+        image: gcr.io/${PROJECT_ID}/doc-ocr-backend:TAG # Placeholder
+        ports:
+        - containerPort: 8000
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka.doc-ocr.svc.cluster.local:9092"
+        - name: MONGODB_URL
+          value: "mongodb://mongodb.doc-ocr.svc.cluster.local:27017/ocr_demo"
+        # Add readiness/liveness probes for production

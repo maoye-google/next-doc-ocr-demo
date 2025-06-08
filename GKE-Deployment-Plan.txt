@@ -1,0 +1,254 @@
+## GKE Deployment Plan for "next-doc-ocr-demo" Project
+
+This document outlines the detailed steps to convert the existing Docker-based project to a Google Kubernetes Engine (GKE) deployment, automated via Google Cloud Build.
+
+**Target Domain:** doc-ocr.maoye.demo.altostrat.com
+
+---
+
+### Phase 1: Initial Setup & Prerequisites (Manual or One-Time)
+
+1.  **Google Cloud Project:**
+    *   Ensure an active Google Cloud Project is available. Let its ID be `YOUR_GCP_PROJECT_ID`.
+    *   Note the Project Number: `YOUR_GCP_PROJECT_NUMBER`.
+
+2.  **Enable Necessary Google Cloud APIs:**
+    *   In `YOUR_GCP_PROJECT_ID`, enable the following APIs:
+        *   Kubernetes Engine API
+        *   Cloud Build API
+        *   Artifact Registry API (preferred over Container Registry)
+        *   IAM API
+        *   Compute Engine API
+        *   Cloud DNS API (if managing DNS through GCP)
+        *   Secret Manager API
+        *   AI Platform Training & Prediction API (Vertex AI API)
+
+3.  **GKE Cluster Creation (Parameterize in Cloud Build):**
+    *   A GKE cluster will be used. The plan assumes it might be pre-existing or created. Cloud Build will target this cluster.
+    *   Example parameters (to be used as substitutions in Cloud Build):
+        *   Cluster Name: `_GKE_CLUSTER_NAME` (e.g., "next-demo-cluster")
+        *   Cluster Region/Zone: `_GKE_CLUSTER_LOCATION` (e.g., "us-central1")
+
+4.  **DNS Configuration (Manual):**
+    *   A static IP address named `doc-ocr-ip` will be created by Cloud Build.
+    *   Manually create an 'A' record in your DNS provider for `doc-ocr.maoye.demo.altostrat.com` pointing to the static IP address that will be reserved by Cloud Build. This step is manual as Cloud Build might not have permissions to your external DNS provider. If using Cloud DNS, this could potentially be automated.
+
+---
+
+### Phase 2: Kubernetes Manifests
+
+*   Create a new directory named `k8s` in the root of your project.
+*   All subsequent Kubernetes YAML files will be placed in this `k8s/` directory.
+
+1.  **Namespace (`k8s/00-namespace.yaml`):**
+    *   Define a Kubernetes Namespace named `doc-ocr`.
+
+2.  **MongoDB (`k8s/10-mongodb-statefulset.yaml`, `k8s/11-mongodb-service.yaml`):**
+    *   **StatefulSet (`10-mongodb-statefulset.yaml`):**
+        *   Name: `mongodb`
+        *   Namespace: `doc-ocr`
+        *   Replicas: 1 (minimum for POC)
+        *   Image: `mongo:latest`
+        *   Container Port: 27017
+        *   Volume for data persistence (`/data/db`).
+        *   Environment variable: `MONGO_INITDB_DATABASE: ocr_demo`
+    *   **Service (`11-mongodb-service.yaml`):**
+        *   Name: `mongodb`
+        *   Namespace: `doc-ocr`
+        *   Type: ClusterIP
+        *   Selector: Matches MongoDB StatefulSet pods.
+        *   Port: 27017 targeting 27017.
+
+3.  **Zookeeper (`k8s/20-zookeeper-statefulset.yaml`, `k8s/21-zookeeper-service.yaml`):**
+    *   **StatefulSet (`20-zookeeper-statefulset.yaml`):**
+        *   Name: `zookeeper`
+        *   Namespace: `doc-ocr`
+        *   Replicas: 1
+        *   Image: `confluentinc/cp-zookeeper:7.3.0`
+        *   Container Port: 2181
+        *   Environment variables:
+            *   `ZOOKEEPER_CLIENT_PORT: 2181`
+            *   `ZOOKEEPER_TICK_TIME: 2000`
+    *   **Service (`21-zookeeper-service.yaml`):**
+        *   Name: `zookeeper`
+        *   Namespace: `doc-ocr`
+        *   Type: ClusterIP
+        *   Selector: Matches Zookeeper StatefulSet pods.
+        *   Port: 2181 targeting 2181.
+
+4.  **Kafka (`k8s/30-kafka-statefulset.yaml`, `k8s/31-kafka-service.yaml`):**
+    *   **StatefulSet (`30-kafka-statefulset.yaml`):**
+        *   Name: `kafka`
+        *   Namespace: `doc-ocr`
+        *   Replicas: 1
+        *   Image: `confluentinc/cp-kafka:7.3.0`
+        *   Container Ports: 9092
+        *   Environment variables:
+            *   `KAFKA_BROKER_ID: 1`
+            *   `KAFKA_ZOOKEEPER_CONNECT: zookeeper.doc-ocr.svc.cluster.local:2181` (using K8s service DNS)
+            *   `KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka.doc-ocr.svc.cluster.local:9092`
+            *   `KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1`
+            *   `KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"`
+    *   **Service (`31-kafka-service.yaml`):**
+        *   Name: `kafka`
+        *   Namespace: `doc-ocr`
+        *   Type: ClusterIP
+        *   Selector: Matches Kafka StatefulSet pods.
+        *   Port: 9092 targeting 9092.
+        *   (Port 29092 is not explicitly exposed as ClusterIP unless needed for specific internal access patterns different from the advertised listener).
+
+5.  **Vertex AI Service Account Kubernetes Secret (`k8s/01-gcp-sa-key-secret.placeholder.yaml`):**
+    *   This file will be a template or placeholder. The actual secret will be created/updated by Cloud Build.
+    *   Name: `gcp-sa-key`
+    *   Namespace: `doc-ocr`
+    *   Type: Opaque
+    *   Data: `service-account-key.json: <base64_encoded_sa_key_json_content>` (Cloud Build will populate this)
+
+6.  **`doc-ocr-processing` Application (`k8s/40-doc-ocr-processing-deployment.yaml`):**
+    *   **Deployment:**
+        *   Name: `doc-ocr-processing`
+        *   Namespace: `doc-ocr`
+        *   Replicas: 1
+        *   Image: To be dynamically set by Cloud Build (e.g., `gcr.io/${PROJECT_ID}/doc-ocr-processing:TAG`)
+        *   Environment variables (from `docker-compose.yml`):
+            *   `PYTHONUNBUFFERED: 1`
+            *   `KAFKA_BOOTSTRAP_SERVERS: kafka.doc-ocr.svc.cluster.local:9092`
+            *   `MONGODB_URL: mongodb://mongodb.doc-ocr.svc.cluster.local:27017/ocr_demo`
+            *   `GOOGLE_APPLICATION_CREDENTIALS: /app/credentials/service-account-key.json`
+            *   `GCP_PROJECT_ID: YOUR_GCP_PROJECT_ID` (or from Cloud Build substitution)
+            *   `GCP_LOCATION: YOUR_GCP_LOCATION` (or from Cloud Build substitution)
+        *   VolumeMounts: Mount the `gcp-sa-key` secret to `/app/credentials/service-account-key.json`.
+        *   Volumes: Define the secret volume.
+
+7.  **`doc-ocr-backend` Application (`k8s/50-doc-ocr-backend-deployment.yaml`, `k8s/51-doc-ocr-backend-service.yaml`):**
+    *   **Deployment (`50-doc-ocr-backend-deployment.yaml`):**
+        *   Name: `doc-ocr-backend`
+        *   Namespace: `doc-ocr`
+        *   Replicas: 1
+        *   Image: To be dynamically set by Cloud Build.
+        *   Container Port: 8000
+        *   Environment variables:
+            *   `PYTHONUNBUFFERED: 1`
+            *   `KAFKA_BOOTSTRAP_SERVERS: kafka.doc-ocr.svc.cluster.local:9092`
+            *   `MONGODB_URL: mongodb://mongodb.doc-ocr.svc.cluster.local:27017/ocr_demo`
+    *   **Service (`51-doc-ocr-backend-service.yaml`):**
+        *   Name: `doc-ocr-backend-service`
+        *   Namespace: `doc-ocr`
+        *   Type: ClusterIP
+        *   Selector: Matches `doc-ocr-backend` pods.
+        *   Port: 8000 targeting 8000.
+
+8.  **`doc-ocr-frontend` Application (`k8s/60-doc-ocr-frontend-deployment.yaml`, `k8s/61-doc-ocr-frontend-service.yaml`):**
+    *   **Deployment (`60-doc-ocr-frontend-deployment.yaml`):**
+        *   Name: `doc-ocr-frontend`
+        *   Namespace: `doc-ocr`
+        *   Replicas: 1
+        *   Image: To be dynamically set by Cloud Build.
+        *   Container Port: 5173
+        *   Environment variables (if any, e.g., `BACKEND_HOST`, `BACKEND_PORT` are usually handled by proxy/ingress in K8s).
+    *   **Service (`61-doc-ocr-frontend-service.yaml`):**
+        *   Name: `doc-ocr-frontend-service`
+        *   Namespace: `doc-ocr`
+        *   Type: ClusterIP
+        *   Selector: Matches `doc-ocr-frontend` pods.
+        *   Port: 80 targeting 5173 (Ingress will target port 80 on this service).
+
+9.  **Google-Managed Certificate (`k8s/70-managed-certificate.yaml`):**
+    *   Define a `ManagedCertificate` resource.
+    *   Name: `doc-ocr-certificate`
+    *   Namespace: `doc-ocr`
+    *   Domains: `doc-ocr.maoye.demo.altostrat.com`
+
+10. **Ingress (`k8s/71-ingress.yaml`):**
+    *   Define an Ingress resource.
+    *   Name: `doc-ocr-ingress`
+    *   Namespace: `doc-ocr`
+    *   Annotations:
+        *   `kubernetes.io/ingress.global-static-ip-name: "doc-ocr-ip"`
+        *   `networking.gke.io/managed-certificates: "doc-ocr-certificate"`
+        *   `kubernetes.io/ingress.class: "gce"`
+    *   Rules:
+        *   Host: `doc-ocr.maoye.demo.altostrat.com`
+        *   Path `/api/*` routes to `doc-ocr-backend-service` on port `8000`.
+        *   Path `/*` (default) routes to `doc-ocr-frontend-service` on port `80`.
+
+---
+
+### Phase 3: Application Code Changes
+
+1.  **Update `doc-ocr-frontend/vite.config.js`:**
+    *   Add `doc-ocr.maoye.demo.altostrat.com` to the `server.allowedHosts` array.
+    ```javascript
+    // vite.config.js
+    export default defineConfig({
+      // ... other configs
+      server: {
+        // ... other server configs
+        allowedHosts: ['doc-ocr.maoye.demo.altostrat.com', 'localhost'], // Add your domain
+      },
+    });
+    ```
+
+---
+
+### Phase 4: Cloud Build Automation (`cloudbuild.yaml`)
+
+*   Create a `cloudbuild.yaml` file in the root of your project.
+*   Define substitutions: `_GCP_PROJECT_ID`, `_GCP_PROJECT_NUMBER`, `_GKE_CLUSTER_NAME`, `_GKE_CLUSTER_LOCATION`, `_ARTIFACT_REGISTRY_REPO` (e.g., "doc-ocr-repo"), `_ARTIFACT_REGISTRY_LOCATION` (e.g., "us-central1"), `_VERTEX_AI_SA_NAME_PREFIX` ("doc-ocr-vertex-ai-sa"), `_K8S_NAMESPACE` ("doc-ocr"), `_STATIC_IP_NAME` ("doc-ocr-ip").
+
+*   **Steps in `cloudbuild.yaml`:**
+    1.  **Grant Permissions to Cloud Build SA (Idempotent):**
+        *   Use `gcloud projects add-iam-policy-binding` for the default Cloud Build SA (`${_GCP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com`).
+        *   Required roles: `roles/container.admin`, `roles/iam.serviceAccountAdmin`, `roles/iam.serviceAccountKeyAdmin`, `roles/artifactregistry.writer`, `roles/compute.globalAddressAdmin`, `roles/secretmanager.admin` (or more granular `secretAccessor` and `secretCreator`), `roles/resourcemanager.projectIamAdmin` (use with caution, for SA role grants).
+    2.  **Create Global Static IP (Idempotent):**
+        *   `gcloud compute addresses describe ${_STATIC_IP_NAME} --global || gcloud compute addresses create ${_STATIC_IP_NAME} --global`
+    3.  **Create Artifact Registry Repository (Idempotent):**
+        *   `gcloud artifacts repositories describe ${_ARTIFACT_REGISTRY_REPO} --location=${_ARTIFACT_REGISTRY_LOCATION} --project=${_GCP_PROJECT_ID} || gcloud artifacts repositories create ${_ARTIFACT_REGISTRY_REPO} --repository-format=docker --location=${_ARTIFACT_REGISTRY_LOCATION} --description="Doc OCR images" --project=${_GCP_PROJECT_ID}`
+    4.  **Manage Vertex AI Service Account & Key:**
+        *   Construct SA email: `_VERTEX_AI_SA_EMAIL=${_VERTEX_AI_SA_NAME_PREFIX}@${_GCP_PROJECT_ID}.iam.gserviceaccount.com`
+        *   Check if SA exists: `gcloud iam service-accounts describe ${_VERTEX_AI_SA_EMAIL} --project=${_GCP_PROJECT_ID}`. If not, create: `gcloud iam service-accounts create ${_VERTEX_AI_SA_NAME_PREFIX} --display-name="Vertex AI SA for Doc OCR" --project=${_GCP_PROJECT_ID}`.
+        *   Grant `roles/aiplatform.user` to `${_VERTEX_AI_SA_EMAIL}` on project `${_GCP_PROJECT_ID}`.
+        *   List existing keys for `${_VERTEX_AI_SA_EMAIL}`.
+        *   Create a new key: `gcloud iam service-accounts keys create service-account-key.json --iam-account=${_VERTEX_AI_SA_EMAIL} --project=${_GCP_PROJECT_ID}`.
+        *   Delete old keys (e.g., keep only the latest 1 or 2).
+        *   Get GKE credentials.
+        *   Create/Update Kubernetes secret `gcp-sa-key` in namespace `_K8S_NAMESPACE` from `service-account-key.json`.
+        *   Delete local `service-account-key.json`.
+    5.  **Build Docker Images:**
+        *   Build `doc-ocr-frontend`, `doc-ocr-backend`, `doc-ocr-processing`. Tag with `$COMMIT_SHA`.
+        *   Example: `docker build -t ${_ARTIFACT_REGISTRY_LOCATION}-docker.pkg.dev/${_GCP_PROJECT_ID}/${_ARTIFACT_REGISTRY_REPO}/doc-ocr-frontend:$COMMIT_SHA ./doc-ocr-frontend`
+    6.  **Push Docker Images to Artifact Registry:**
+        *   Push the built images.
+    7.  **Deploy to GKE:**
+        *   Get GKE credentials: `gcloud container clusters get-credentials ${_GKE_CLUSTER_NAME} --location ${_GKE_CLUSTER_LOCATION} --project ${_GCP_PROJECT_ID}`.
+        *   **Update K8s Manifests:** Use `sed` or `kustomize` to replace image placeholders in `k8s/*.yaml` with the new image tags and any other dynamic values (like project ID if needed in manifests).
+        *   Apply all manifests in `k8s/` directory in order (namespace, secrets, infrastructure services, application services, ingress).
+            *   `kubectl apply -f k8s/00-namespace.yaml`
+            *   (SA secret is handled in step 4)
+            *   `kubectl apply -f k8s/ -n ${_K8S_NAMESPACE}` (or apply individually if order is critical beyond simple dependencies).
+
+---
+
+### Phase 5: Documentation (`GKE-Deployment-README.md`)
+
+*   Create a `GKE-Deployment-README.md` file in the root of your project.
+*   **Contents:**
+    1.  **Overview:** Project description and GKE deployment architecture.
+    2.  **Prerequisites:** List one-time setup steps (GCP Project, API enablement, GKE cluster info, DNS record pointing to the static IP).
+    3.  **Cloud Build Trigger Setup:** Instructions on how to set up a Cloud Build trigger (e.g., on push to `main` branch).
+    4.  **Required Substitutions for Cloud Build:** List all `_VARIABLES` used in `cloudbuild.yaml` and their example values.
+    5.  **Deployment Process:** Briefly explain what `cloudbuild.yaml` automates.
+    6.  **Accessing the Application:** How to access `https://doc-ocr.maoye.demo.altostrat.com` after deployment.
+    7.  **Troubleshooting:** Tips for checking logs (Cloud Build, GKE Pods, Ingress).
+    8.  **Cleanup:** Instructions on how to delete deployed resources (GKE resources, static IP, SA, Artifact Registry images if necessary).
+
+---
+
+This detailed plan should enable consistent project updates and deployments to GKE.
+Each step is designed to be clear and actionable.
+The use of substitutions in Cloud Build allows for flexibility in targeting different environments or projects.
+Idempotency in resource creation steps within Cloud Build is crucial for re-runnability.
+
+**Note on Service Account Key Rotation:** The plan includes creating a new key and deleting old ones. Ensure the logic for deleting old keys is robust (e.g., doesn't delete the only key if creation of a new one fails, keeps a configurable number of recent keys).
+
+**Note on IAM Permissions:** Granting `roles/resourcemanager.projectIamAdmin` to the Cloud Build SA is powerful. If possible, pre-assign necessary roles to the Vertex AI SA manually or through a separate, more privileged setup script to adhere to the principle of least privilege for the CI/CD pipeline.

@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: doc-ocr-frontend
+  namespace: doc-ocr
+  labels:
+    app: doc-ocr-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: doc-ocr-frontend
+  template:
+    metadata:
+      labels:
+        app: doc-ocr-frontend
+    spec:
+      containers:
+      - name: doc-ocr-frontend
+        image: gcr.io/${PROJECT_ID}/doc-ocr-frontend:TAG # Placeholder
+        ports:
+        - containerPort: 5173
+        # Add readiness/liveness probes for production
