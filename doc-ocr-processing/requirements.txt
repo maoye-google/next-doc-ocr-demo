@@ -1,0 +1,8 @@
+# Minimal dependencies for demo
+fastapi
+uvicorn
+pymongo
+kafka-python
+pydantic
+google-cloud-aiplatform
+google-auth
