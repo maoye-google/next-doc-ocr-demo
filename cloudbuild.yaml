@@ -1,242 +1,220 @@
 steps:
-  # Step 1: Grant necessary permissions to Cloud Build service account
-  - id: 'Step-1 : grant permissions'
-    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        set -e
-        echo "Granting permissions to Cloud Build service account..."
-        
-        # Grant required roles to Cloud Build SA
-        gcloud projects add-iam-policy-binding ${_GCP_PROJECT_ID} \
-          --member="serviceAccount:${_GCP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-          --role="roles/container.admin" || true
-        
-        gcloud projects add-iam-policy-binding ${_GCP_PROJECT_ID} \
-          --member="serviceAccount:${_GCP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-          --role="roles/iam.serviceAccountAdmin" || true
-        
-        gcloud projects add-iam-policy-binding ${_GCP_PROJECT_ID} \
-          --member="serviceAccount:${_GCP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-          --role="roles/iam.serviceAccountKeyAdmin" || true
-        
-        gcloud projects add-iam-policy-binding ${_GCP_PROJECT_ID} \
-          --member="serviceAccount:${_GCP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-          --role="roles/artifactregistry.writer" || true
-        
-        gcloud projects add-iam-policy-binding ${_GCP_PROJECT_ID} \
-          --member="serviceAccount:${_GCP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-          --role="roles/compute.globalAddressAdmin" || true
-        
-        gcloud projects add-iam-policy-binding ${_GCP_PROJECT_ID} \
-          --member="serviceAccount:${_GCP_PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-          --role="roles/secretmanager.admin" || true
+# Step-1: Grant permissions to Cloud Build service account
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-1: Grant permissions to Cloud Build service account'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    # Get Cloud Build service account
+    export CLOUDBUILD_SA=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")@cloudbuild.gserviceaccount.com
+    
+    # Grant necessary roles
+    gcloud projects add-iam-policy-binding $PROJECT_ID \
+      --member="serviceAccount:$$CLOUDBUILD_SA" \
+      --role="roles/container.developer"
+    
+    gcloud projects add-iam-policy-binding $PROJECT_ID \
+      --member="serviceAccount:$$CLOUDBUILD_SA" \
+      --role="roles/container.clusterAdmin"
+    
+    gcloud projects add-iam-policy-binding $PROJECT_ID \
+      --member="serviceAccount:$$CLOUDBUILD_SA" \
+      --role="roles/iam.serviceAccountAdmin"
+    
+    gcloud projects add-iam-policy-binding $PROJECT_ID \
+      --member="serviceAccount:$$CLOUDBUILD_SA" \
+      --role="roles/iam.serviceAccountKeyAdmin"
+    
+    gcloud projects add-iam-policy-binding $PROJECT_ID \
+      --member="serviceAccount:$$CLOUDBUILD_SA" \
+      --role="roles/compute.networkAdmin"
 
-  # Step 2: Create global static IP (idempotent)
-  - id: 'Step-2 : create static IP'
-    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        set -e
-        echo "Creating or verifying global static IP..."
-        gcloud compute addresses describe ${_STATIC_IP_NAME} --global --project=${_GCP_PROJECT_ID} || \
-        gcloud compute addresses create ${_STATIC_IP_NAME} --global --project=${_GCP_PROJECT_ID}
-        
-        # Display the IP address for reference
-        gcloud compute addresses describe ${_STATIC_IP_NAME} --global --project=${_GCP_PROJECT_ID} --format="get(address)"
+# Step-2: Create service account
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-2: Create service account'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    # Check if service account exists
+    if ! gcloud iam service-accounts describe doc-ocr-vertex-ai-sa@$PROJECT_ID.iam.gserviceaccount.com >/dev/null 2>&1; then
+      echo "Creating new service account..."
+      gcloud iam service-accounts create doc-ocr-vertex-ai-sa \
+        --display-name="Doc OCR Vertex AI Service Account" \
+        --description="Service account for doc-ocr to access Vertex AI"
+      
+      # Grant Vertex AI permissions
+      gcloud projects add-iam-policy-binding $PROJECT_ID \
+        --member="serviceAccount:doc-ocr-vertex-ai-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+        --role="roles/aiplatform.user"
+      
+      gcloud projects add-iam-policy-binding $PROJECT_ID \
+        --member="serviceAccount:doc-ocr-vertex-ai-sa@$PROJECT_ID.iam.gserviceaccount.com" \
+        --role="roles/ml.developer"
+    else
+      echo "Service account already exists"
+    fi
 
-  # Step 4: Manage Vertex AI Service Account and Key
-  - id: 'Step-4 : manage service account'
-    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        set -e
-        echo "Managing Vertex AI Service Account..."
-        
-        # Construct SA email
-        VERTEX_AI_SA_EMAIL="${_VERTEX_AI_SA_NAME_PREFIX}@${_GCP_PROJECT_ID}.iam.gserviceaccount.com"
-        
-        # Create SA if it doesn't exist
-        gcloud iam service-accounts describe $$VERTEX_AI_SA_EMAIL --project=${_GCP_PROJECT_ID} || \
-        gcloud iam service-accounts create ${_VERTEX_AI_SA_NAME_PREFIX} \
-          --display-name="Vertex AI SA for Doc OCR" \
-          --project=${_GCP_PROJECT_ID}
-        
-        # Grant required role
-        gcloud projects add-iam-policy-binding ${_GCP_PROJECT_ID} \
-          --member="serviceAccount:$$VERTEX_AI_SA_EMAIL" \
-          --role="roles/aiplatform.user" || true
-        
-        # Create new key
-        gcloud iam service-accounts keys create service-account-key.json \
-          --iam-account=$$VERTEX_AI_SA_EMAIL \
-          --project=${_GCP_PROJECT_ID}
-        
-        # Get GKE credentials
-        gcloud container clusters get-credentials ${_GKE_CLUSTER_NAME} \
-          --location ${_GKE_CLUSTER_LOCATION} \
-          --project ${_GCP_PROJECT_ID}
-        
-        # Create namespace if it doesn't exist
-        kubectl create namespace ${_K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-        
-        # Create or update Kubernetes secret
-        kubectl create secret generic gcp-sa-key \
-          --from-file=service-account-key.json=service-account-key.json \
-          --namespace=${_K8S_NAMESPACE} \
-          --dry-run=client -o yaml | kubectl apply -f -
-        
-        # Clean up local key file
-        rm -f service-account-key.json
+# Step-3: Create static IP
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-3: Create static IP'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    # Check if static IP exists
+    if ! gcloud compute addresses describe doc-ocr-ip --global >/dev/null 2>&1; then
+      echo "Creating static IP..."
+      gcloud compute addresses create doc-ocr-ip --global
+    else
+      echo "Static IP already exists"
+    fi
 
-  # Step 5: Build Docker Images
-  - id: 'Step-5a : build frontend'
-    name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'build'
-      - '-t'
-      - 'gcr.io/${_GCP_PROJECT_ID}/doc-ocr-frontend:latest'
-      - './doc-ocr-frontend'
+# Step-4: Generate service account key
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-4: Generate service account key'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    # Delete existing keys (cleanup old keys)
+    gcloud iam service-accounts keys list \
+      --iam-account=doc-ocr-vertex-ai-sa@$PROJECT_ID.iam.gserviceaccount.com \
+      --format="value(name)" | while read key; do
+      echo "Deleting old key: $$key"
+      gcloud iam service-accounts keys delete $$key \
+        --iam-account=doc-ocr-vertex-ai-sa@$PROJECT_ID.iam.gserviceaccount.com \
+        --quiet || true
+    done
+    
+    # Generate new key
+    gcloud iam service-accounts keys create /workspace/sa-key.json \
+      --iam-account=doc-ocr-vertex-ai-sa@$PROJECT_ID.iam.gserviceaccount.com
 
-  - id: 'Step-5b : build backend'
-    name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'build'
-      - '-t'
-      - 'gcr.io/${_GCP_PROJECT_ID}/doc-ocr-backend:latest'
-      - './doc-ocr-backend'
+# Step-5: Get GKE credentials
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-5: Get GKE credentials'
+  entrypoint: 'gcloud'
+  args:
+  - 'container'
+  - 'clusters'
+  - 'get-credentials'
+  - '${_GKE_CLUSTER_NAME}'
+  - '--region=${_GKE_REGION}'
+  - '--project=$PROJECT_ID'
 
-  - id: 'Step-5c : build processing'
-    name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'build'
-      - '-t'
-      - 'gcr.io/${_GCP_PROJECT_ID}/doc-ocr-processing:latest'
-      - './doc-ocr-processing'
+# Step-6: Create namespace
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-6: Create namespace'
+  entrypoint: 'kubectl'
+  args: ['apply', '-f', 'k8s/Namespace.yaml']
 
-  # Step 6: Push Docker Images to Artifact Registry
-  - id: 'Step-6a : push frontend'
-    name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - 'gcr.io/${_GCP_PROJECT_ID}/doc-ocr-frontend:latest'
+# Step-7: Create secret with service account key
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-7: Create secret with service account key'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    kubectl create secret generic vertex-ai-sa-key \
+      --from-file=key.json=/workspace/sa-key.json \
+      --namespace=doc-ocr \
+      --dry-run=client -o yaml | kubectl apply -f -
 
-  - id: 'Step-6b : push backend'
-    name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - 'gcr.io/${_GCP_PROJECT_ID}/doc-ocr-backend:latest'
+# Step-8: Deploy infrastructure (MongoDB, ZooKeeper, Kafka)
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-8: Deploy infrastructure'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    # Apply all infrastructure components
+    kubectl apply -f k8s/mongodb-StatefulSet.yaml
+    kubectl apply -f k8s/mongodb-Service.yaml
+    kubectl apply -f k8s/zookeeper-StatefulSet.yaml
+    kubectl apply -f k8s/zookeeper-Service.yaml
+    kubectl apply -f k8s/kafka-StatefulSet.yaml
+    kubectl apply -f k8s/kafka-service.yaml
+    
+    # Wait for infrastructure to be ready
+    kubectl wait --for=condition=ready pod -l app=mongodb --timeout=300s -n doc-ocr
+    kubectl wait --for=condition=ready pod -l app=zookeeper --timeout=300s -n doc-ocr
+    kubectl wait --for=condition=ready pod -l app=kafka --timeout=600s -n doc-ocr
 
-  - id: 'Step-6c : push processing'
-    name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - 'gcr.io/${_GCP_PROJECT_ID}/doc-ocr-processing:latest'
+# Step-9: Build doc-ocr-backend image
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Step-9: Build doc-ocr-backend image'
+  args: ['build', '-t', 'gcr.io/$PROJECT_ID/doc-ocr-backend:latest', './doc-ocr-backend']
 
-  # Step 7: Deploy to GKE
-  - id: 'Step-7 : deploy to GKE'
-    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        set -e
-        echo "Deploying to GKE..."
-        
-        # Get GKE credentials
-        gcloud container clusters get-credentials ${_GKE_CLUSTER_NAME} \
-          --location ${_GKE_CLUSTER_LOCATION} \
-          --project ${_GCP_PROJECT_ID}
-        
-        # Create temporary directory for processed manifests
-        mkdir -p k8s-processed
-        cp -r k8s/* k8s-processed/
-        
-        # Update image references in deployment manifests
-        sed -i "s|YOUR_GCP_PROJECT_ID|${_GCP_PROJECT_ID}|g" k8s-processed/*.yaml
-        sed -i "s|:TAG|:latest|g" k8s-processed/*.yaml
-        
-        # Apply manifests in order
-        echo "Applying namespace..."
-        kubectl apply -f k8s-processed/Namespace.yaml
-        
-        echo "Applying infrastructure components..."
-        kubectl apply -f k8s-processed/mongodb-StatefulSet.yaml
-        kubectl apply -f k8s-processed/mongodb-Service.yaml
-        kubectl apply -f k8s-processed/zookeeper-StatefulSet.yaml
-        kubectl apply -f k8s-processed/zookeeper-Service.yaml
-        kubectl apply -f k8s-processed/kafka-StatefulSet.yaml
-        kubectl apply -f k8s-processed/kafka-service.yaml
-        
-        echo "Applying application deployments..."
-        kubectl apply -f k8s-processed/doc-ocr-processing-Deployment.yaml
-        kubectl apply -f k8s-processed/doc-ocr-backend-Deployment.yaml
-        kubectl apply -f k8s-processed/doc-ocr-backend-Service.yaml
-        kubectl apply -f k8s-processed/doc-ocr-frontend-Deployment.yaml
-        kubectl apply -f k8s-processed/doc-ocr-frontend-Service.yaml
-        
-        echo "Applying ingress and certificates..."
-        kubectl apply -f k8s-processed/ManagedCertificate.yaml
-        kubectl apply -f k8s-processed/Ingress.yaml
-        
-        echo "Deployment completed successfully!"
-        
-        # Wait for deployments to be ready
-        echo "Waiting for deployments to be ready..."
-        kubectl wait --for=condition=available --timeout=600s deployment/doc-ocr-backend -n ${_K8S_NAMESPACE}
-        kubectl wait --for=condition=available --timeout=600s deployment/doc-ocr-frontend -n ${_K8S_NAMESPACE}
-        kubectl wait --for=condition=available --timeout=600s deployment/doc-ocr-processing -n ${_K8S_NAMESPACE}
-        
-        echo "All deployments are ready!"
+# Step-10: Build doc-ocr-processing image
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Step-10: Build doc-ocr-processing image'
+  args: ['build', '-t', 'gcr.io/$PROJECT_ID/doc-ocr-processing:latest', './doc-ocr-processing']
 
-  # Step 8: Force restart deployments to ensure new images are used
-  - id: 'Step-8 : restart deployments'
-    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:latest'
-    entrypoint: 'bash'
-    args:
-      - '-c'
-      - |
-        set -e
-        echo "Forcing restart of deployments to ensure new images are used..."
-        
-        # Get GKE credentials
-        gcloud container clusters get-credentials ${_GKE_CLUSTER_NAME} \
-          --location ${_GKE_CLUSTER_LOCATION} \
-          --project ${_GCP_PROJECT_ID}
-        
-        # Force restart all application deployments
-        kubectl rollout restart deployment/doc-ocr-backend -n ${_K8S_NAMESPACE}
-        kubectl rollout restart deployment/doc-ocr-frontend -n ${_K8S_NAMESPACE}
-        kubectl rollout restart deployment/doc-ocr-processing -n ${_K8S_NAMESPACE}
-        
-        # Wait for rollouts to complete
-        echo "Waiting for rollouts to complete..."
-        kubectl rollout status deployment/doc-ocr-backend -n ${_K8S_NAMESPACE} --timeout=600s
-        kubectl rollout status deployment/doc-ocr-frontend -n ${_K8S_NAMESPACE} --timeout=600s
-        kubectl rollout status deployment/doc-ocr-processing -n ${_K8S_NAMESPACE} --timeout=600s
-        
-        echo "All deployments have been restarted and are ready!"
+# Step-11: Build doc-ocr-frontend image
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Step-11: Build doc-ocr-frontend image'
+  args: ['build', '-t', 'gcr.io/$PROJECT_ID/doc-ocr-frontend:latest', './doc-ocr-frontend']
 
-# Substitutions with default values
+# Step-12: Push doc-ocr-backend image
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Step-12: Push doc-ocr-backend image'
+  args: ['push', 'gcr.io/$PROJECT_ID/doc-ocr-backend:latest']
+
+# Step-13: Push doc-ocr-processing image
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Step-13: Push doc-ocr-processing image'
+  args: ['push', 'gcr.io/$PROJECT_ID/doc-ocr-processing:latest']
+
+# Step-14: Push doc-ocr-frontend image
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Step-14: Push doc-ocr-frontend image'
+  args: ['push', 'gcr.io/$PROJECT_ID/doc-ocr-frontend:latest']
+
+# Step-15: Deploy applications
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-15: Deploy applications'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    # Substitute PROJECT_ID in deployment files
+    sed "s/\$${PROJECT_ID}/$PROJECT_ID/g" k8s/doc-ocr-processing-Deployment.yaml | kubectl apply -f -
+    sed "s/\$${PROJECT_ID}/$PROJECT_ID/g" k8s/doc-ocr-backend-Deployment.yaml | kubectl apply -f -
+    kubectl apply -f k8s/doc-ocr-backend-Service.yaml
+    sed "s/\$${PROJECT_ID}/$PROJECT_ID/g" k8s/doc-ocr-frontend-Deployment.yaml | kubectl apply -f -
+    kubectl apply -f k8s/doc-ocr-frontend-Service.yaml
+
+# Step-16: Deploy ingress and certificate
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-16: Deploy ingress and certificate'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    kubectl apply -f k8s/ManagedCertificate.yaml
+    kubectl apply -f k8s/Ingress.yaml
+
+# Step-17: Wait for deployments and restart pods
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  id: 'Step-17: Wait for deployments and restart pods'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    # Wait for deployments to be ready
+    kubectl wait --for=condition=available deployment/doc-ocr-processing --timeout=600s -n doc-ocr
+    kubectl wait --for=condition=available deployment/doc-ocr-backend --timeout=600s -n doc-ocr
+    kubectl wait --for=condition=available deployment/doc-ocr-frontend --timeout=600s -n doc-ocr
+    
+    # Restart pods to ensure they pick up latest images
+    kubectl rollout restart deployment/doc-ocr-processing -n doc-ocr
+    kubectl rollout restart deployment/doc-ocr-backend -n doc-ocr
+    kubectl rollout restart deployment/doc-ocr-frontend -n doc-ocr
+
 substitutions:
-  _GCP_PROJECT_ID: 'gen-ai-demonstration-390410'
-  _GCP_PROJECT_NUMBER: '753441703627'
   _GKE_CLUSTER_NAME: 'next-demo-cluster'
-  _GKE_CLUSTER_LOCATION: 'us-central1'
-  _VERTEX_AI_SA_NAME_PREFIX: 'doc-ocr-vertex-ai-sa'
-  _K8S_NAMESPACE: 'doc-ocr'
-  _STATIC_IP_NAME: 'doc-ocr-ip'
+  _GKE_REGION: 'us-central1'
 
-# Options
-options:
-  machineType: 'E2_HIGHCPU_8'
-  logging: CLOUD_LOGGING_ONLY
-
-# Timeout for the entire build
-timeout: '3600s'
+timeout: 3600s

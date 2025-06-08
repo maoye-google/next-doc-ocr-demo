@@ -4,10 +4,8 @@ metadata:
   name: zookeeper
   namespace: doc-ocr
 spec:
-  type: ClusterIP
+  ports:
+  - port: 2181
+    targetPort: 2181
   selector:
     app: zookeeper
-  ports:
-  - protocol: TCP
-    port: 2181
-    targetPort: 2181

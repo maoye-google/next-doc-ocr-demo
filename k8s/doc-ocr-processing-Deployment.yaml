@@ -3,8 +3,6 @@ kind: Deployment
 metadata:
   name: doc-ocr-processing
   namespace: doc-ocr
-  labels:
-    app: doc-ocr-processing
 spec:
   replicas: 1
   selector:
@@ -17,28 +15,34 @@ spec:
     spec:
       containers:
       - name: doc-ocr-processing
-        image: gcr.io/${PROJECT_ID}/doc-ocr-processing:TAG # Placeholder, will be replaced by Cloud Build
+        image: gcr.io/${PROJECT_ID}/doc-ocr-processing:latest
         env:
         - name: PYTHONUNBUFFERED
           value: "1"
-        - name: KAFKA_BOOTSTRAP_SERVERS
-          value: "kafka.doc-ocr.svc.cluster.local:9092"
+        - name: KAFKA_BROKER
+          value: "local-kafka:29092"
         - name: MONGODB_URL
-          value: "mongodb://mongodb.doc-ocr.svc.cluster.local:27017/ocr_demo"
+          value: "mongodb://mongodb:27017/ocr_demo"
         - name: GOOGLE_APPLICATION_CREDENTIALS
-          value: "/app/credentials/service-account-key.json"
-        - name: GCP_PROJECT_ID # Will be substituted by Cloud Build
-          value: "YOUR_GCP_PROJECT_ID"
-        - name: GCP_LOCATION # Will be substituted by Cloud Build
+          value: "/app/credentials/key.json"
+        - name: GCP_PROJECT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['project-id']
+        - name: GCP_LOCATION
           value: "us-central1"
         volumeMounts:
-        - name: gcp-sa-key-volume
-          mountPath: "/app/credentials"
+        - name: vertex-ai-key
+          mountPath: /app/credentials
           readOnly: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
       volumes:
-      - name: gcp-sa-key-volume
+      - name: vertex-ai-key
         secret:
-          secretName: gcp-sa-key
-          items:
-          - key: service-account-key.json # This should match the key in the secret data
-            path: service-account-key.json
+          secretName: vertex-ai-sa-key

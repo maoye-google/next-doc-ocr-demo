@@ -4,7 +4,7 @@ metadata:
   name: zookeeper
   namespace: doc-ocr
 spec:
-  serviceName: "zookeeper"
+  serviceName: zookeeper
   replicas: 1
   selector:
     matchLabels:
@@ -14,14 +14,58 @@ spec:
       labels:
         app: zookeeper
     spec:
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+      initContainers:
+      - name: fix-permissions
+        image: busybox
+        command: ['sh', '-c', 'chown -R 1000:1000 /var/lib/zookeeper/data /var/lib/zookeeper/log && chmod -R 755 /var/lib/zookeeper/data /var/lib/zookeeper/log']
+        volumeMounts:
+        - name: zookeeper-data
+          mountPath: /var/lib/zookeeper/data
+        - name: zookeeper-logs
+          mountPath: /var/lib/zookeeper/log
+        securityContext:
+          runAsUser: 0
       containers:
       - name: zookeeper
         image: confluentinc/cp-zookeeper:7.3.0
         ports:
         - containerPort: 2181
-          name: client
         env:
         - name: ZOOKEEPER_CLIENT_PORT
           value: "2181"
         - name: ZOOKEEPER_TICK_TIME
           value: "2000"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: zookeeper-data
+          mountPath: /var/lib/zookeeper/data
+        - name: zookeeper-logs
+          mountPath: /var/lib/zookeeper/log
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+  volumeClaimTemplates:
+  - metadata:
+      name: zookeeper-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+  - metadata:
+      name: zookeeper-logs
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi

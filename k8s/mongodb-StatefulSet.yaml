@@ -4,7 +4,7 @@ metadata:
   name: mongodb
   namespace: doc-ocr
 spec:
-  serviceName: "mongodb"
+  serviceName: mongodb
   replicas: 1
   selector:
     matchLabels:
@@ -19,18 +19,24 @@ spec:
         image: mongo:latest
         ports:
         - containerPort: 27017
-          name: mongodb
         env:
         - name: MONGO_INITDB_DATABASE
           value: "ocr_demo"
         volumeMounts:
-        - name: mongodb-persistent-storage
+        - name: mongodb-data
           mountPath: /data/db
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
   volumeClaimTemplates:
   - metadata:
-      name: mongodb-persistent-storage
+      name: mongodb-data
     spec:
-      accessModes: [ "ReadWriteOnce" ]
+      accessModes: ["ReadWriteOnce"]
       resources:
         requests:
-          storage: 1Gi # Minimal storage for POC
+          storage: 1Gi

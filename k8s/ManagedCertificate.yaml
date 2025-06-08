@@ -1,7 +1,7 @@
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
-  name: doc-ocr-certificate
+  name: doc-ocr-ssl-cert
   namespace: doc-ocr
 spec:
   domains:

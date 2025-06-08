@@ -4,28 +4,26 @@ metadata:
   name: doc-ocr-ingress
   namespace: doc-ocr
   annotations:
-    kubernetes.io/ingress.global-static-ip-name: "doc-ocr-ip"
-    networking.gke.io/managed-certificates: "doc-ocr-certificate"
-    kubernetes.io/ingress.class: "gce" 
-    # For GKE Autopilot or newer GKE versions, you might not need kubernetes.io/ingress.class: "gce"
-    # or you might use a different class like "gce-internal" if it were an internal LB.
-    # For external, "gce" is usually correct or it's the default.
+    kubernetes.io/ingress.global-static-ip-name: doc-ocr-ip
+    networking.gke.io/managed-certificates: doc-ocr-ssl-cert
+    kubernetes.io/ingress.class: gce
+    kubernetes.io/ingress.allow-http: "false"
 spec:
   rules:
   - host: doc-ocr.maoye.demo.altostrat.com
     http:
       paths:
       - path: /api/*
-        pathType: Prefix 
+        pathType: ImplementationSpecific
         backend:
           service:
-            name: doc-ocr-backend-service
+            name: doc-ocr-backend
             port:
               number: 8000
       - path: /*
-        pathType: Prefix
+        pathType: ImplementationSpecific
         backend:
           service:
-            name: doc-ocr-frontend-service
+            name: doc-ocr-frontend
             port:
-              number: 80
+              number: 5173

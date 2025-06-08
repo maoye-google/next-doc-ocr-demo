@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Environment variables
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:29092")
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/ocr_demo")
 
 # Global variables for connections
@@ -191,7 +191,7 @@ def init_connections():
         
         # Initialize Kafka Producer with retry logic
         logger.info(f"=== CONNECTING TO KAFKA ===")
-        logger.info(f"Kafka bootstrap servers: {KAFKA_BOOTSTRAP_SERVERS}")
+        logger.info(f"Kafka Broker servers: {KAFKA_BROKER}")
         
         max_retries = 5
         retry_delay = 2
@@ -199,7 +199,7 @@ def init_connections():
         for attempt in range(max_retries):
             try:
                 kafka_producer = KafkaProducer(
-                    bootstrap_servers=[KAFKA_BOOTSTRAP_SERVERS],
+                    bootstrap_servers=[KAFKA_BROKER],
                     value_serializer=lambda v: json.dumps(v).encode('utf-8'),
                     retries=3,
                     request_timeout_ms=30000,
@@ -332,7 +332,7 @@ def publish_page_to_kafka(job_id: str, page_number: int, image_data: str, llm_mo
         logger.error(f"=== KAFKA SEND FAILED ===")
         logger.error(f"Failed to publish to Kafka: {e}")
         logger.error(f"Exception type: {type(e).__name__}")
-        logger.error(f"Kafka producer bootstrap servers: {KAFKA_BOOTSTRAP_SERVERS}")
+        logger.error(f"Kafka producer broker servers: {KAFKA_BROKER}")
 
 def publish_aggregation_signal(job_id: str, llm_model: str, total_pages: int):
     """Publish aggregation signal to Kafka"""
