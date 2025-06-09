@@ -254,7 +254,7 @@ def process_page_with_vertex_ai(image_data: str, model_key: str) -> Dict[str, An
         elif response.candidates[0].content.parts:
             extracted_text = response.candidates[0].text
 
-        logger.info(f"Extracted Text : {extracted_text}")
+        logger.debug(f"Extracted Text : {extracted_text}")
 
         return {
             "extracted_text": extracted_text,
