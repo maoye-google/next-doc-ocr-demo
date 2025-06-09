@@ -217,4 +217,7 @@ substitutions:
   _GKE_CLUSTER_NAME: 'next-demo-cluster'
   _GKE_REGION: 'us-central1'
 
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 timeout: 3600s
