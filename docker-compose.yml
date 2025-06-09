@@ -102,7 +102,7 @@ services:
       context: ./doc-ocr-frontend  # Updated context
       dockerfile: Dockerfile
     ports:
-      - "${PORT:-5173}:5173"
+      - "${PORT:-5173}:80"
     environment:
       BACKEND_HOST: doc-ocr-backend
       BACKEND_PORT: 8000 
