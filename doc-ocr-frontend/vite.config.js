@@ -17,6 +17,7 @@ export default defineConfig({
     },
     allowedHosts: ['doc-ocr.maoye.demo.altostrat.com'],
   },
+  base: "/",
   build: {
     outDir: 'build' // Output directory for 'npm run build'
   },

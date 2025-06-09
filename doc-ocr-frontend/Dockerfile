@@ -14,15 +14,17 @@ RUN npm install
 COPY . .
 
 # Build the app for production
-RUN npm run build
+RUN npm run build 
 
 # Production stage
 FROM nginx:alpine
-
-# Copy the build output to nginx html directory
+# Copy built assets from the 'build' stage
 COPY --from=build /app/build /usr/share/nginx/html
+# Copy a custom Nginx configuration, if you have one (optional)
+# COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Expose port 80 (Nginx default)
 
-# Copy custom nginx configuration if exists
+# Copy custom nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
 # Make port 80 available to the world outside this container

@@ -6,6 +6,10 @@ metadata:
   annotations:
     kubernetes.io/ingress.global-static-ip-name: doc-ocr-ip
     networking.gke.io/managed-certificates: doc-ocr-ssl-cert
+    # kubernetes.io/ingress.class: nginx
+    # nginx.ingress.kubernetes.io/rewrite-target: /$1
+    # nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    # nginx.ingress.kubernetes.io/backend-protocol: HTTP
     kubernetes.io/ingress.class: gce
     kubernetes.io/ingress.allow-http: "false"
 spec:
